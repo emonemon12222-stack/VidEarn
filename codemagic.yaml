@@ -8,8 +8,14 @@ workflows:
         PACKAGE_NAME: "com.aistudio.videoreward.kptvyz"
       java: 17
     scripts:
-      - name: Build Android Debug APK
+      - name: Install Gradle 9.3.1 and Build APK
         script: |
+          # গ্রেডল ৯.৩.১ ডাউনলোড এবং সেটআপ করা
+          wget https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
+          unzip -q gradle-9.3.1-bin.zip
+          export PATH=$PWD/gradle-9.3.1/bin:$PATH
+          
+          # বিল্ড রান করা
           gradle assembleDebug --warning-mode all
     artifacts:
       - app/build/outputs/**/*.apk
