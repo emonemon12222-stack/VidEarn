@@ -1,0 +1,6 @@
+{
+  "name": "VidEarn",
+  "description": "Video-sharing and earning platform with TikTok-style Shorts, YouTube-style feed, dynamic coin earnings, cash withdrawals (bKash/Nagad/Rocket/Binance), AdSterra ads, and Admin Panel",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
