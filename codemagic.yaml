@@ -10,11 +10,17 @@ workflows:
     scripts:
       - name: Install Gradle 9.3.1 and Build APK
         script: |
+          # গ্রেডল ৯.৩.১ ডাউনলোড এবং সেটআপ করা
           wget https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
           unzip -q gradle-9.3.1-bin.zip
           export PATH=$PWD/gradle-9.3.1/bin:$PATH
           
-          # স্ট্যান্ডার্ড অ্যান্ডোয়েড ডিবাগ কমান্ড
+          # অ্যান্ডোয়েডের ডিফল্ট লোকেশন ও প্রজেক্ট লোকেশনে ডিবাগ কিস্টোর তৈরি করা
+          mkdir -p ~/.android
+          keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          cp ~/.android/debug.keystore debug.keystore
+          
+          # অ্যান্ডোয়েড ডিবাগ APK বিল্ড করা
           gradle assembleDebug --warning-mode all
     artifacts:
       - app/build/outputs/**/*.apk
