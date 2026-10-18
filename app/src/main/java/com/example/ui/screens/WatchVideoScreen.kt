@@ -33,6 +33,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.model.Video
 import com.example.ui.components.AdSterraBanner
+import com.example.ui.components.VideoPlayerView
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainViewModel
 
@@ -69,36 +70,18 @@ fun WatchVideoScreen(
             .fillMaxSize()
             .background(DarkBg)
     ) {
-        // Video Player Container (YouTube Style)
+        // Video Player Container (YouTube & Direct Video Player)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(230.dp)
                 .background(Color.Black)
         ) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(video.thumbnailUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = video.title,
-                contentScale = ContentScale.Crop,
+            // Embedded YouTube & Direct Video Player
+            VideoPlayerView(
+                videoUrl = video.videoUrl,
+                isShort = false,
                 modifier = Modifier.fillMaxSize()
-            )
-
-            // Dark gradient overlay
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.Black.copy(alpha = 0.5f),
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.7f)
-                            )
-                        )
-                    )
             )
 
             // Top Bar over Player: Back button & Video Title
@@ -113,7 +96,7 @@ fun WatchVideoScreen(
                     modifier = Modifier
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.5f))
+                        .background(Color.Black.copy(alpha = 0.65f))
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -124,66 +107,23 @@ fun WatchVideoScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                Text(
-                    text = video.title,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            // Center Play/Pause Control
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .clickable { viewModel.toggleVideoPlayback() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isVideoPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isVideoPlaying) "Pause" else "Play",
-                    tint = Color.White,
-                    modifier = Modifier.size(36.dp)
-                )
-            }
-
-            // Player Bottom Control Bar
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "00:${videoWatchSec.toString().padStart(2, '0')} / ${video.durationLabel}",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
                 Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = BrandRed,
-                    modifier = Modifier.padding(horizontal = 4.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.Black.copy(alpha = 0.65f)
                 ) {
                     Text(
-                        text = "HD 1080p",
+                        text = video.title,
                         color = Color.White,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
             }
 
-            // Bottom Progress Bar
+            // Bottom Progress Bar for coin earning
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
@@ -467,7 +407,7 @@ fun WatchVideoScreen(
             }
 
             // AdSterra Banner Slot inside watch page
-            if (adminSettings.isAdsEnabled) {
+            if (adminSettings.isAdsEnabled && adminSettings.isBannerAdEnabled) {
                 item {
                     AdSterraBanner(
                         adScriptTag = adminSettings.adSterraBannerScript,

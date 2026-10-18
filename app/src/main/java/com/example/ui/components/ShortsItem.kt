@@ -47,7 +47,8 @@ fun ShortsItem(
     onLikeClick: () -> Unit,
     onCommentClick: () -> Unit,
     commentsList: List<Comment>,
-    onAddComment: (String) -> Unit
+    onAddComment: (String) -> Unit,
+    isActivePage: Boolean = true
 ) {
     val context = LocalContext.current
     var showCommentSheet by remember { mutableStateOf(false) }
@@ -74,18 +75,25 @@ fun ShortsItem(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable(onClick = onTogglePlay)
     ) {
-        // Video Preview / Simulated Video Frame
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(video.thumbnailUrl)
-                .crossfade(true)
-                .build(),
-            contentDescription = video.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        // Video Player or Preview Thumbnail
+        if (isActivePage) {
+            VideoPlayerView(
+                videoUrl = video.videoUrl,
+                isShort = true,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(video.thumbnailUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = video.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
         // Subtle dark gradient vignette for readable text and controls
         Box(

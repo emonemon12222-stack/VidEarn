@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.PaymentMethod
 import com.example.data.model.WithdrawalStatus
 import com.example.data.repository.AppRepository
+import com.example.util.YouTubeHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -22,6 +23,42 @@ class ExampleRobolectricTest {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
     assertEquals("VidEarn", appName)
+  }
+
+  @Test
+  fun `test youtube url parser for various formats`() {
+    // Standard watch URL
+    val id1 = YouTubeHelper.extractVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    assertEquals("dQw4w9WgXcQ", id1)
+
+    // Shortened youtu.be URL
+    val id2 = YouTubeHelper.extractVideoId("https://youtu.be/dQw4w9WgXcQ?si=testing123")
+    assertEquals("dQw4w9WgXcQ", id2)
+
+    // YouTube Shorts URL
+    val id3 = YouTubeHelper.extractVideoId("https://www.youtube.com/shorts/50_4e0K9_Y8")
+    assertEquals("50_4e0K9_Y8", id3)
+
+    // Shorts with query parameters
+    val id4 = YouTubeHelper.extractVideoId("https://youtube.com/shorts/k9GjF8eP210?feature=share")
+    assertEquals("k9GjF8eP210", id4)
+
+    // Embed URL
+    val id5 = YouTubeHelper.extractVideoId("https://www.youtube.com/embed/jNQXAC9IVRw")
+    assertEquals("jNQXAC9IVRw", id5)
+
+    // Raw 11-char ID
+    val id6 = YouTubeHelper.extractVideoId("dQw4w9WgXcQ")
+    assertEquals("dQw4w9WgXcQ", id6)
+
+    // Check thumbnail URL
+    val thumb = YouTubeHelper.getThumbnailUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    assertEquals("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg", thumb)
+
+    // Check embed HTML contains video ID and iframe
+    val html = YouTubeHelper.buildEmbedHtml("dQw4w9WgXcQ", false)
+    assertTrue(html.contains("dQw4w9WgXcQ"))
+    assertTrue(html.contains("iframe"))
   }
 
   @Test

@@ -153,10 +153,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Popunder Trigger State
+    private val _popunderUrlToLaunch = MutableStateFlow<String?>(null)
+    val popunderUrlToLaunch: StateFlow<String?> = _popunderUrlToLaunch.asStateFlow()
+
+    fun clearPopunder() {
+        _popunderUrlToLaunch.value = null
+    }
+
+    fun triggerPopunderIfEnabled() {
+        val settings = adminSettings.value
+        if (settings.isAdsEnabled && settings.isPopunderEnabled && settings.adSterraPopunderUrl.isNotBlank()) {
+            _popunderUrlToLaunch.value = settings.adSterraPopunderUrl
+        }
+    }
+
     fun openWatchVideo(video: Video) {
         _watchingVideo.value = video
         repository.incrementViews(video.id)
         startVideoWatchTimer(video)
+        triggerPopunderIfEnabled()
     }
 
     fun closeWatchVideo() {

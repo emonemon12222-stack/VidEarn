@@ -48,19 +48,19 @@ fun UploadScreen(
     // Pre-fill quick samples for easy testing
     fun fillSample(type: VideoType) {
         if (type == VideoType.SHORT) {
-            title = "Fastest Android Jetpack Compose Tips & Tricks"
-            description = "Quick 15s developer guide on state management and UI performance."
-            videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
-            thumbnailUrl = "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=500"
+            title = "Most Satisfying Kinetic Sand & Neon Art ✂️ #shorts"
+            description = "Quick 15s satisfying art cut. Watch and earn instant coins!"
+            videoUrl = "https://www.youtube.com/shorts/50_4e0K9_Y8"
+            thumbnailUrl = "https://img.youtube.com/vi/50_4e0K9_Y8/hqdefault.jpg"
             selectedType = VideoType.SHORT
-            selectedCategory = "Tech"
+            selectedCategory = "Trending"
         } else {
-            title = "Ultimate Crypto Staking & Yield Farming in 2026"
-            description = "Detailed walkthrough on how to generate safe returns with Binance."
-            videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-            thumbnailUrl = "https://images.unsplash.com/photo-1621416894569-0f39ed31d247?w=800"
+            title = "How to Make Online Income Watching Videos & Doing Tasks in 2026"
+            description = "Complete guide to passive earnings with bKash, Nagad, and Binance withdrawals."
+            videoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            thumbnailUrl = "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
             selectedType = VideoType.LONG
-            selectedCategory = "Crypto"
+            selectedCategory = "Earning"
         }
     }
 
@@ -226,8 +226,17 @@ fun UploadScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
                     value = videoUrl,
-                    onValueChange = { videoUrl = it },
-                    placeholder = { Text("https://youtu.be/... or .mp4 URL", color = DarkTextMuted, fontSize = 13.sp) },
+                    onValueChange = { input ->
+                        videoUrl = input
+                        if (com.example.util.YouTubeHelper.isShortsUrl(input)) {
+                            selectedType = VideoType.SHORT
+                        }
+                        val autoThumb = com.example.util.YouTubeHelper.getThumbnailUrl(input)
+                        if (autoThumb.isNotBlank()) {
+                            thumbnailUrl = autoThumb
+                        }
+                    },
+                    placeholder = { Text("https://youtu.be/... or https://youtube.com/shorts/...", color = DarkTextMuted, fontSize = 13.sp) },
                     leadingIcon = {
                         Icon(Icons.Default.Link, contentDescription = null, tint = DarkTextMuted)
                     },
@@ -243,6 +252,23 @@ fun UploadScreen(
                     ),
                     singleLine = true
                 )
+
+                val detectedId = com.example.util.YouTubeHelper.extractVideoId(videoUrl)
+                if (detectedId != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF10B981).copy(alpha = 0.2f)
+                    ) {
+                        Text(
+                            text = "✓ YouTube Video Detected (ID: $detectedId)",
+                            color = Color(0xFF10B981),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
             }
 
             // Video Title

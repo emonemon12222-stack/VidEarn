@@ -85,8 +85,21 @@ data class AdminSettings(
     val coinsPerUpload: Int = 50,
     val coinToBdtRate: Double = 0.01, // 100 coins = 1 BDT
     val minWithdrawalCoins: Long = 500, // 5 BDT
+    // 1. Banner Ad
+    val isBannerAdEnabled: Boolean = true,
     val adSterraBannerScript: String = "//adsterra-banner-code-zone-918231.js",
+    // 2. Direct Link / Smartlink
+    val isDirectLinkEnabled: Boolean = true,
     val adSterraDirectLink: String = "https://example.com/adsterra-direct-earn",
+    // 3. Social Bar Ad
+    val isSocialBarEnabled: Boolean = true,
+    val adSterraSocialBarScript: String = "//adsterra-socialbar-zone-839201.js",
+    val adSterraSocialBarUrl: String = "https://example.com/adsterra-socialbar-promo",
+    // 4. Popunder Ad
+    val isPopunderEnabled: Boolean = false,
+    val adSterraPopunderScript: String = "//adsterra-popunder-zone-492012.js",
+    val adSterraPopunderUrl: String = "https://example.com/adsterra-popunder-landing",
+    // Master Switch
     val isAdsEnabled: Boolean = true
 )
 

@@ -335,8 +335,9 @@ class AppRepository(context: Context) {
     // ---------------- VIDEOS (FEED, SHORTS, WATCH) ----------------
 
     private fun loadVideos() {
+        val seedVersion = prefs.getInt("videos_version_v2", 0)
         val saved = prefs.getString("videos_db", null)
-        if (saved != null) {
+        if (saved != null && seedVersion >= 2) {
             try {
                 val arr = JSONArray(saved)
                 val list = mutableListOf<Video>()
@@ -349,7 +350,9 @@ class AppRepository(context: Context) {
                             description = obj.optString("description", ""),
                             videoUrl = obj.getString("videoUrl"),
                             type = VideoType.valueOf(obj.optString("type", "LONG")),
-                            thumbnailUrl = obj.optString("thumbnailUrl", ""),
+                            thumbnailUrl = obj.optString("thumbnailUrl", "").ifBlank {
+                                com.example.util.YouTubeHelper.getThumbnailUrl(obj.getString("videoUrl"))
+                            },
                             channelName = obj.optString("channelName", "Creator"),
                             channelAvatar = obj.optString("channelAvatar", ""),
                             views = obj.optLong("views", 100),
@@ -371,16 +374,16 @@ class AppRepository(context: Context) {
             }
         }
 
-        // Pre-seeded high quality videos
+        // Pre-seeded high quality YouTube Shorts & Long videos
         val defaultVideos = listOf(
-            // --- SHORTS ---
+            // --- SHORTS (Vertical YouTube Shorts) ---
             Video(
                 id = "short_1",
-                title = "Most Satisfying Kinetic Sand & Neon Slime Cutting ✂️",
-                description = "Relaxing ASMR cutting video. Watch full 10s to earn instant coins!",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+                title = "Most Satisfying Kinetic Sand & Neon Art ✂️ #shorts",
+                description = "Ultra satisfying neon art cutting. Watch 10s to earn instant coins!",
+                videoUrl = "https://www.youtube.com/shorts/50_4e0K9_Y8",
                 type = VideoType.SHORT,
-                thumbnailUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=500",
+                thumbnailUrl = "https://img.youtube.com/vi/50_4e0K9_Y8/hqdefault.jpg",
                 channelName = "SatisfyingVibes",
                 channelAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100",
                 views = 42800,
@@ -392,11 +395,11 @@ class AppRepository(context: Context) {
             ),
             Video(
                 id = "short_2",
-                title = "Amazing 3D Drone Lights Show in Dubai Skyline 🌟",
+                title = "Insane 3D Drone Formation Light Show 🌟 #shorts",
                 description = "Futuristic 1000 drone formation over the city night lights.",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+                videoUrl = "https://www.youtube.com/shorts/k9GjF8eP210",
                 type = VideoType.SHORT,
-                thumbnailUrl = "https://images.unsplash.com/photo-1508614589041-895b88991e3e?w=500",
+                thumbnailUrl = "https://img.youtube.com/vi/k9GjF8eP210/hqdefault.jpg",
                 channelName = "TechFuturism",
                 channelAvatar = "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100",
                 views = 89400,
@@ -408,11 +411,11 @@ class AppRepository(context: Context) {
             ),
             Video(
                 id = "short_3",
-                title = "Insane Street Basketball Dunk Trickshots 🏀",
+                title = "Amazing Basketball Trickshot Dunks 🏀 #shorts",
                 description = "Watch till the end for the 360 between-the-legs windmill dunk!",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+                videoUrl = "https://www.youtube.com/shorts/4V90Aky6_w0",
                 type = VideoType.SHORT,
-                thumbnailUrl = "https://images.unsplash.com/photo-1546519638-68e109498ffc?w=500",
+                thumbnailUrl = "https://img.youtube.com/vi/4V90Aky6_w0/hqdefault.jpg",
                 channelName = "HoopDaily",
                 channelAvatar = "https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=100",
                 views = 152000,
@@ -424,11 +427,11 @@ class AppRepository(context: Context) {
             ),
             Video(
                 id = "short_4",
-                title = "5 Second Life Hack That Saves Hundreds of Dollars 💡",
+                title = "5 Second Life Hack That Saves Hundreds of Dollars 💡 #shorts",
                 description = "Quick finance life hack for online shopping discount codes.",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyBlazes.mp4",
+                videoUrl = "https://www.youtube.com/shorts/L_LUpnjgPso",
                 type = VideoType.SHORT,
-                thumbnailUrl = "https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=500",
+                thumbnailUrl = "https://img.youtube.com/vi/L_LUpnjgPso/hqdefault.jpg",
                 channelName = "MoneyHacks",
                 channelAvatar = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100",
                 views = 68000,
@@ -439,14 +442,14 @@ class AppRepository(context: Context) {
                 category = "Earning"
             ),
 
-            // --- LONG VIDEOS ---
+            // --- LONG VIDEOS (YouTube Standard) ---
             Video(
                 id = "long_1",
-                title = "How to Make \$50/Day Watching Videos & Doing Online Tasks in 2026",
+                title = "How to Make Online Income Watching Videos & Doing Tasks in 2026",
                 description = "Step-by-step complete blueprint for beginners to withdraw earnings directly to bKash, Nagad, or Binance.",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                videoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 type = VideoType.LONG,
-                thumbnailUrl = "https://images.unsplash.com/photo-1553729459-efe14ef6055d?w=800",
+                thumbnailUrl = "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
                 channelName = "PassiveIncomeBD",
                 channelAvatar = "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100",
                 views = 284000,
@@ -458,43 +461,43 @@ class AppRepository(context: Context) {
             ),
             Video(
                 id = "long_2",
-                title = "Top 10 High Paying Remote Skills You Can Learn in 30 Days",
-                description = "AI Prompt Engineering, Cloud development, Flutter, and Video editing guide.",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                title = "The First Video Ever on YouTube - Me at the zoo (Historical)",
+                description = "Historic YouTube milestone video recorded at the San Diego Zoo.",
+                videoUrl = "https://www.youtube.com/watch?v=jNQXAC9IVRw",
                 type = VideoType.LONG,
-                thumbnailUrl = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800",
-                channelName = "CareerFoundry",
+                thumbnailUrl = "https://img.youtube.com/vi/jNQXAC9IVRw/hqdefault.jpg",
+                channelName = "jawed",
                 channelAvatar = "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=100",
-                views = 98000,
-                likes = 8200,
-                commentsCount = 310,
-                durationLabel = "18:45",
+                views = 310000000,
+                likes = 15000000,
+                commentsCount = 11200000,
+                durationLabel = "00:19",
                 rewardCoins = 30,
                 category = "Tutorial"
             ),
             Video(
                 id = "long_3",
-                title = "Binance P2P Trading Guide: How to Safely Buy & Sell USDT to bKash",
-                description = "Complete safety checklist for zero-fee crypto peer-to-peer transactions in Bangladesh and South Asia.",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+                title = "Top Tech Innovations & Futuristic Gadgets That Blew My Mind",
+                description = "Futuristic gadgets, artificial intelligence, and smart robotics breakdown.",
+                videoUrl = "https://www.youtube.com/watch?v=fJ9rUzIMcZQ",
                 type = VideoType.LONG,
-                thumbnailUrl = "https://images.unsplash.com/photo-1621416894569-0f39ed31d247?w=800",
-                channelName = "CryptoBangla",
+                thumbnailUrl = "https://img.youtube.com/vi/fJ9rUzIMcZQ/hqdefault.jpg",
+                channelName = "TechPulse",
                 channelAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
                 views = 142000,
                 likes = 11300,
                 commentsCount = 520,
                 durationLabel = "11:10",
                 rewardCoins = 30,
-                category = "Crypto"
+                category = "Tech"
             ),
             Video(
                 id = "long_4",
                 title = "Cybersecurity Essentials: Prevent Phone Hacks & Secure Your bKash/Nagad PIN",
                 description = "Crucial protection tips against SMS phishing, fake OTP scams, and social engineering.",
-                videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
+                videoUrl = "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
                 type = VideoType.LONG,
-                thumbnailUrl = "https://images.unsplash.com/photo-1563986768609-322da13575f3?w=800",
+                thumbnailUrl = "https://img.youtube.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
                 channelName = "CyberShield",
                 channelAvatar = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100",
                 views = 73000,
@@ -507,6 +510,7 @@ class AppRepository(context: Context) {
         )
 
         _videos.value = defaultVideos
+        prefs.edit().putInt("videos_version_v2", 2).apply()
         saveVideos(defaultVideos)
     }
 
@@ -548,12 +552,11 @@ class AppRepository(context: Context) {
         uploaderName: String
     ): Video {
         // Auto pick a reliable thumbnail if not provided
-        val effectiveThumb = if (thumbnailUrl.isNotBlank()) {
-            thumbnailUrl
-        } else if (url.contains("youtu", ignoreCase = true)) {
-            "https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=800"
-        } else {
-            "https://images.unsplash.com/photo-1536240478700-b869070f9279?w=800"
+        val ytThumb = com.example.util.YouTubeHelper.getThumbnailUrl(url)
+        val effectiveThumb = when {
+            thumbnailUrl.isNotBlank() -> thumbnailUrl.trim()
+            ytThumb.isNotBlank() -> ytThumb
+            else -> "https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=800"
         }
 
         val newVideo = Video(
@@ -830,8 +833,16 @@ class AppRepository(context: Context) {
         val coinsUpload = prefs.getInt("cfg_upload_coins", 50)
         val rate = prefs.getFloat("cfg_bdt_rate", 0.01f).toDouble()
         val minCoins = prefs.getLong("cfg_min_coins", 500L)
+        val bannerEnabled = prefs.getBoolean("cfg_banner_enabled", true)
         val adScript = prefs.getString("cfg_adsterra_script", "//adsterra-banner-code-zone-918231.js") ?: ""
+        val directLinkEnabled = prefs.getBoolean("cfg_direct_link_enabled", true)
         val adLink = prefs.getString("cfg_adsterra_link", "https://example.com/adsterra-direct-earn") ?: ""
+        val socialBarEnabled = prefs.getBoolean("cfg_socialbar_enabled", true)
+        val socialBarScript = prefs.getString("cfg_socialbar_script", "//adsterra-socialbar-zone-839201.js") ?: ""
+        val socialBarUrl = prefs.getString("cfg_socialbar_url", "https://example.com/adsterra-socialbar-promo") ?: ""
+        val popunderEnabled = prefs.getBoolean("cfg_popunder_enabled", false)
+        val popunderScript = prefs.getString("cfg_popunder_script", "//adsterra-popunder-zone-492012.js") ?: ""
+        val popunderUrl = prefs.getString("cfg_popunder_url", "https://example.com/adsterra-popunder-landing") ?: ""
         val adsEnabled = prefs.getBoolean("cfg_ads_enabled", true)
 
         _adminSettings.value = AdminSettings(
@@ -844,8 +855,16 @@ class AppRepository(context: Context) {
             coinsPerUpload = coinsUpload,
             coinToBdtRate = rate,
             minWithdrawalCoins = minCoins,
+            isBannerAdEnabled = bannerEnabled,
             adSterraBannerScript = adScript,
+            isDirectLinkEnabled = directLinkEnabled,
             adSterraDirectLink = adLink,
+            isSocialBarEnabled = socialBarEnabled,
+            adSterraSocialBarScript = socialBarScript,
+            adSterraSocialBarUrl = socialBarUrl,
+            isPopunderEnabled = popunderEnabled,
+            adSterraPopunderScript = popunderScript,
+            adSterraPopunderUrl = popunderUrl,
             isAdsEnabled = adsEnabled
         )
     }
@@ -862,8 +881,16 @@ class AppRepository(context: Context) {
             .putInt("cfg_upload_coins", newSettings.coinsPerUpload)
             .putFloat("cfg_bdt_rate", newSettings.coinToBdtRate.toFloat())
             .putLong("cfg_min_coins", newSettings.minWithdrawalCoins)
+            .putBoolean("cfg_banner_enabled", newSettings.isBannerAdEnabled)
             .putString("cfg_adsterra_script", newSettings.adSterraBannerScript)
+            .putBoolean("cfg_direct_link_enabled", newSettings.isDirectLinkEnabled)
             .putString("cfg_adsterra_link", newSettings.adSterraDirectLink)
+            .putBoolean("cfg_socialbar_enabled", newSettings.isSocialBarEnabled)
+            .putString("cfg_socialbar_script", newSettings.adSterraSocialBarScript)
+            .putString("cfg_socialbar_url", newSettings.adSterraSocialBarUrl)
+            .putBoolean("cfg_popunder_enabled", newSettings.isPopunderEnabled)
+            .putString("cfg_popunder_script", newSettings.adSterraPopunderScript)
+            .putString("cfg_popunder_url", newSettings.adSterraPopunderUrl)
             .putBoolean("cfg_ads_enabled", newSettings.isAdsEnabled)
             .apply()
     }

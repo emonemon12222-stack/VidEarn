@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.AdSterraPopunderDialog
+import com.example.ui.components.AdSterraSocialBar
 import com.example.ui.components.CoinRewardDialog
 import com.example.ui.screens.*
 import com.example.ui.theme.*
@@ -52,6 +54,8 @@ fun MainContent(viewModel: MainViewModel) {
     val watchingVideo by viewModel.watchingVideo.collectAsState()
     val isAdminLoggedIn by viewModel.isAdminLoggedIn.collectAsState()
     val showAdminLoginDialog by viewModel.showAdminLoginDialog.collectAsState()
+    val adminSettings by viewModel.adminSettings.collectAsState()
+    val popunderUrlToLaunch by viewModel.popunderUrlToLaunch.collectAsState()
     val celebration by viewModel.celebration.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
 
@@ -263,6 +267,31 @@ fun MainContent(viewModel: MainViewModel) {
                     title = cel.title,
                     message = cel.message,
                     onDismiss = { viewModel.dismissCelebration() }
+                )
+            }
+
+            // Floating AdSterra Social Bar
+            if (adminSettings.isAdsEnabled && adminSettings.isSocialBarEnabled && currentUser != null && !isAdminLoggedIn && watchingVideo == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 6.dp)
+                ) {
+                    AdSterraSocialBar(
+                        socialBarScript = adminSettings.adSterraSocialBarScript,
+                        socialBarUrl = adminSettings.adSterraSocialBarUrl,
+                        fallbackDirectLink = adminSettings.adSterraDirectLink
+                    )
+                }
+            }
+
+            // AdSterra Popunder Dialog
+            popunderUrlToLaunch?.let { popUrl ->
+                AdSterraPopunderDialog(
+                    popunderUrl = popUrl,
+                    fallbackUrl = adminSettings.adSterraDirectLink,
+                    onDismiss = { viewModel.clearPopunder() }
                 )
             }
         }

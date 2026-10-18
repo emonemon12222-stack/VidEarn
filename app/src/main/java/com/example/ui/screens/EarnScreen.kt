@@ -515,7 +515,7 @@ fun EarnScreen(
             }
 
             // AdSterra Banner Unit
-            if (adminSettings.isAdsEnabled) {
+            if (adminSettings.isAdsEnabled && adminSettings.isBannerAdEnabled) {
                 item {
                     AdSterraBanner(
                         adScriptTag = adminSettings.adSterraBannerScript,

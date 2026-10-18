@@ -372,7 +372,7 @@ fun ProfileScreen(
                                 fontSize = 13.sp
                             )
                             Text(
-                                text = "Exclusive control panel for ruhul (Credentials: ruhul / ruhulamin1)",
+                                text = "Exclusive control panel for authorized administrators",
                                 color = DarkTextMuted,
                                 fontSize = 11.sp
                             )

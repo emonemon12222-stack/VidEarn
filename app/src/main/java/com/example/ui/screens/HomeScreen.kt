@@ -292,7 +292,7 @@ fun HomeScreen(
                 }
 
                 // AdSterra Top Banner Ad Slot
-                if (adminSettings.isAdsEnabled) {
+                if (adminSettings.isAdsEnabled && adminSettings.isBannerAdEnabled) {
                     item {
                         AdSterraBanner(
                             adScriptTag = adminSettings.adSterraBannerScript,
@@ -367,7 +367,8 @@ fun HomeScreen(
                         onLikeClick = { viewModel.toggleLike(shortVideo) },
                         onCommentClick = { /* Handled inside ShortsItem */ },
                         commentsList = commentsForShort,
-                        onAddComment = { text -> viewModel.postComment(shortVideo.id, text) }
+                        onAddComment = { text -> viewModel.postComment(shortVideo.id, text) },
+                        isActivePage = (pagerState.currentPage == page)
                     )
                 }
             }
