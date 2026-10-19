@@ -32,10 +32,12 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.model.Video
+import com.example.data.model.VideoType
 import com.example.ui.components.AdSterraBanner
 import com.example.ui.components.VideoPlayerView
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainViewModel
+import com.example.util.YouTubeHelper
 
 @Composable
 fun WatchVideoScreen(
@@ -70,17 +72,17 @@ fun WatchVideoScreen(
             .fillMaxSize()
             .background(DarkBg)
     ) {
-        // Video Player Container (YouTube & Direct Video Player)
+        // Video Player Container strictly following standard 16:9 aspect ratio
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(230.dp)
+                .aspectRatio(16f / 9f)
                 .background(Color.Black)
         ) {
             // Embedded YouTube & Direct Video Player
             VideoPlayerView(
                 videoUrl = video.videoUrl,
-                isShort = false,
+                isShort = video.type == VideoType.SHORT || YouTubeHelper.isShortsUrl(video.videoUrl),
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -415,6 +417,66 @@ fun WatchVideoScreen(
                         title = "Exclusive Offer: Get Cash Rewards for Playing Games!",
                         description = "Partner with AdSterra • Instant Withdrawals Available"
                     )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+            }
+
+            // AdSterra Direct Link Trigger inside Watch Video Screen
+            if (adminSettings.isAdsEnabled && adminSettings.isDirectLinkEnabled) {
+                item {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.triggerDirectLink(context) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF1E1B4B),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CoinGold.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(CoinGold.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bolt,
+                                        contentDescription = null,
+                                        tint = CoinGold,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Claim Partner Sponsor Bonus",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = "Tap to open partner portal & earn +30 Coins",
+                                        color = CoinGold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.Default.OpenInNew,
+                                contentDescription = "Open Direct Link",
+                                tint = NeonCyan,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(14.dp))
                 }
             }

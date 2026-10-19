@@ -9,6 +9,9 @@ data class User(
     val role: String = "USER", // "USER" or "ADMIN"
     val isBanned: Boolean = false,
     val referralCode: String = "",
+    val referredBy: String = "",
+    val totalReferredCount: Int = 0,
+    val totalReferralBonusEarned: Long = 0,
     val joinedAt: Long = System.currentTimeMillis()
 )
 
@@ -85,6 +88,8 @@ data class AdminSettings(
     val coinsPerUpload: Int = 50,
     val coinToBdtRate: Double = 0.01, // 100 coins = 1 BDT
     val minWithdrawalCoins: Long = 500, // 5 BDT
+    val referralBonusReferrer: Long = 50, // Reward for referrer
+    val referralBonusNewUser: Long = 50, // Extra welcome coins for new user
     // 1. Banner Ad
     val isBannerAdEnabled: Boolean = true,
     val adSterraBannerScript: String = "//adsterra-banner-code-zone-918231.js",
@@ -119,4 +124,13 @@ data class CoinTransaction(
     val amount: Long,
     val isCredit: Boolean,
     val timestamp: Long = System.currentTimeMillis()
+)
+
+data class WatchedRecord(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val videoId: String,
+    val userId: String,
+    val videoTitle: String = "",
+    val timestamp: Long = System.currentTimeMillis(),
+    val earnedCoins: Int = 0
 )

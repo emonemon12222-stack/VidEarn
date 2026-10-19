@@ -391,11 +391,11 @@ fun VideoCard(
         border = CardDefaults.outlinedCardBorder()
     ) {
         Column {
-            // Video Thumbnail Container
+            // Video Thumbnail Container strictly following 16:9 aspect ratio
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(190.dp)
+                    .aspectRatio(16f / 9f)
                     .background(Color(0xFF1E2130))
             ) {
                 AsyncImage(

@@ -112,6 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val comments = repository.comments
     val transactions = repository.transactions
     val allUsers = repository.allUsers
+    val watchedHistory = repository.watchedHistory
 
     // Filtered Video Flows
     val longVideos: StateFlow<List<Video>> = combine(
@@ -212,6 +213,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val user = currentUser.value
                         if (user != null) {
                             repository.addCoins(user.id, reward.toLong(), "Watch Reward: ${video.title}")
+                            repository.recordWatchedVideo(user.id, video.id, video.title, reward)
                             _celebration.value = RewardCelebration(
                                 coins = reward,
                                 title = "Awesome Watcher!",
@@ -256,6 +258,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val user = currentUser.value
                         if (user != null) {
                             repository.addCoins(user.id, reward.toLong(), "Shorts Reward: ${currentShort.title}")
+                            repository.recordWatchedVideo(user.id, currentShort.id, currentShort.title, reward)
                             _celebration.value = RewardCelebration(
                                 coins = reward,
                                 title = "Shorts Bonus Earned! 🔥",
@@ -321,21 +324,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------- USER AUTHENTICATION ----------------
 
-    fun signUp(name: String, email: String, pass: String, onResult: (Boolean, String) -> Unit) {
+    fun signUp(
+        name: String,
+        email: String,
+        pass: String,
+        referralCode: String = "",
+        onResult: (Boolean, String) -> Unit
+    ) {
         if (name.isBlank() || email.isBlank() || pass.length < 6) {
             onResult(false, "Please provide a valid name, email, and at least 6-character password.")
             return
         }
-        val result = repository.signUp(name, email, pass)
+        val result = repository.signUp(name, email, pass, referralCode)
         result.fold(
             onSuccess = {
-                _statusMessage.value = "Welcome to VidEarn, ${it.name}! +100 Coins added!"
+                val bonusMsg = if (referralCode.isNotBlank()) " +150 Coins added with Referral Bonus! 🎁" else " +100 Coins welcome bonus added!"
+                _statusMessage.value = "Welcome to VidEarn, ${it.name}!$bonusMsg"
                 onResult(true, "Success")
             },
             onFailure = {
                 onResult(false, it.message ?: "Signup failed")
             }
         )
+    }
+
+    /**
+     * Safely triggers AdSterra Direct Link in external system browser or custom tab
+     * and credits direct sponsor bonus coins to the active user.
+     */
+    fun triggerDirectLink(context: android.content.Context) {
+        val settings = adminSettings.value
+        val target = settings.adSterraDirectLink.ifBlank { "https://adsterra.com" }
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target)).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            val user = currentUser.value
+            if (user != null) {
+                repository.claimDirectLinkBonus(user.id, 30)
+                _celebration.value = RewardCelebration(
+                    coins = 30,
+                    title = "Direct Sponsor Explored! ⚡",
+                    message = "You earned +30 Coins for exploring our verified AdSterra partner offer!"
+                )
+            }
+        } catch (e: Exception) {
+            _statusMessage.value = "Could not open direct link: ${e.message}"
+        }
     }
 
     fun signIn(email: String, pass: String, onResult: (Boolean, String) -> Unit) {

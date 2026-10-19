@@ -19,8 +19,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import android.content.Intent
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -38,9 +43,12 @@ fun ProfileScreen(
     val currentUser by viewModel.currentUser.collectAsState()
     val allVideos by viewModel.allVideos.collectAsState()
     val adminSettings by viewModel.adminSettings.collectAsState()
+    val watchedHistory by viewModel.watchedHistory.collectAsState()
 
     val user = currentUser
     val userVideos = allVideos.filter { it.uploaderId == user?.id }
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
 
     Column(
         modifier = modifier
@@ -124,7 +132,7 @@ fun ProfileScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Stats Row: Coins, Uploads, Referral
+                        // Stats Row: Coins, Uploads, Watched, Referral
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceAround
@@ -133,7 +141,7 @@ fun ProfileScreen(
                                 Text(
                                     text = "${user?.coins ?: 0}",
                                     color = CoinGold,
-                                    fontSize = 18.sp,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.Black
                                 )
                                 Text(
@@ -147,7 +155,7 @@ fun ProfileScreen(
                                 Text(
                                     text = "${userVideos.size}",
                                     color = BrandRed,
-                                    fontSize = 18.sp,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.Black
                                 )
                                 Text(
@@ -159,13 +167,27 @@ fun ProfileScreen(
 
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = user?.referralCode ?: "REF123",
+                                    text = "${watchedHistory.size}",
                                     color = NeonCyan,
-                                    fontSize = 16.sp,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.Black
                                 )
                                 Text(
-                                    text = "Referral Code",
+                                    text = "Watched",
+                                    color = DarkTextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = user?.referralCode ?: "REF123",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Referral",
                                     color = DarkTextSecondary,
                                     fontSize = 11.sp
                                 )
@@ -219,6 +241,308 @@ fun ProfileScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Upload Link", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+            }
+
+            // Refer & Earn Program Section
+            item {
+                val refCode = user?.referralCode ?: "REF7721"
+                val refLink = "https://videarn.app/ref?code=$refCode"
+                val totalReferred = user?.totalReferredCount ?: 0
+                val totalBonusEarned = user?.totalReferralBonusEarned ?: 0L
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
+                    border = CardDefaults.outlinedCardBorder()
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(NeonCyan.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.GroupAdd,
+                                    contentDescription = null,
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Refer & Earn Program",
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "+50 Coins per friend who joins with your code",
+                                    color = NeonCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "Share your referral code or link with friends. When they register, both of you earn instant bonus coins permanent in your wallets!",
+                            color = DarkTextSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Referral Statistics Row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DarkSurface)
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceAround
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$totalReferred",
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "Total Referred",
+                                    color = DarkTextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+
+                            Divider(
+                                modifier = Modifier
+                                    .height(30.dp)
+                                    .width(1.dp),
+                                color = DarkCardBorder
+                            )
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$totalBonusEarned Coins",
+                                    color = CoinGold,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "Bonus Earned",
+                                    color = DarkTextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 1. Referral Code Box & Copy Code Button
+                        Text(
+                            text = "YOUR REFERRAL CODE",
+                            color = DarkTextMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = DarkSurface,
+                                border = CardDefaults.outlinedCardBorder(),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = refCode,
+                                    color = CoinGold,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 16.sp,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(refCode))
+                                    Toast.makeText(context, "Referral Code Copied: $refCode", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = DarkSurface,
+                                    contentColor = Color.White
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy Code",
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Copy Code", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // 2. Referral Link Box & Share Button
+                        Text(
+                            text = "YOUR REFERRAL LINK",
+                            color = DarkTextMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = DarkSurface,
+                                border = CardDefaults.outlinedCardBorder(),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = refLink,
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            IconButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(refLink))
+                                    Toast.makeText(context, "Referral Link Copied!", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(DarkSurface)
+                                    .border(1.dp, DarkCardBorder, RoundedCornerShape(10.dp))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Link,
+                                    contentDescription = "Copy Link",
+                                    tint = CoinGold,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(
+                                            Intent.EXTRA_TEXT,
+                                            "🎁 Join VidEarn with my referral code $refCode to earn real cash watching videos! Download the app: $refLink"
+                                        )
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share Referral Link via"))
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = BrandRed,
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Share", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Direct Sponsor Perks Card
+            if (adminSettings.isAdsEnabled && adminSettings.isDirectLinkEnabled) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.triggerDirectLink(context) },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkCard),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CoinGold.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CoinGold.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = null,
+                                    tint = CoinGold,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "AdSterra Partner Direct Sponsor",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = "Explore partner portal & receive +30 Coins bonus reward",
+                                    color = DarkTextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Icon(
+                                imageVector = Icons.Default.OpenInNew,
+                                contentDescription = "Open Sponsor",
+                                tint = NeonCyan,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -326,6 +650,109 @@ fun ProfileScreen(
                                     contentDescription = "Delete",
                                     tint = StatusRejected,
                                     modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Watched Video History Section
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Watch History (${watchedHistory.size})",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (watchedHistory.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        border = CardDefaults.outlinedCardBorder()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "No watched videos recorded yet. Watch videos to earn coins!",
+                                color = DarkTextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(watchedHistory.take(10)) { record ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        border = CardDefaults.outlinedCardBorder()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(CoinGold.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = CoinGold,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = record.videoTitle.ifBlank { "Watched Video" },
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "Completed & Credited",
+                                        color = DarkTextMuted,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = CoinGold.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = "+${record.earnedCoins} Coins",
+                                    color = CoinGold,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
                         }

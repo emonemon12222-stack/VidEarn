@@ -96,4 +96,53 @@ class ExampleRobolectricTest {
     assertNotNull(approvedReq)
     assertEquals(WithdrawalStatus.APPROVED, approvedReq!!.status)
   }
+
+  @Test
+  fun `test referral program generation, signup reward and stats persistence`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repo = AppRepository(context)
+
+    // 1. Test unique code generator based on username & ID
+    val code = repo.generateReferralCode("Emon Ahmed", "uid987654")
+    assertTrue(code.startsWith("EMON"))
+    assertTrue(code.length >= 7)
+
+    // 2. Sign up Referrer user
+    val user1Result = repo.signUp("Referrer User", "referrer@videarn.com", "pass123")
+    assertTrue(user1Result.isSuccess)
+    val referrer = user1Result.getOrThrow()
+    assertEquals(100L, referrer.coins)
+    val referrerCode = referrer.referralCode
+    assertTrue(referrerCode.isNotBlank())
+
+    // 3. New user signs up using Referrer's code
+    val user2Result = repo.signUp("Friend User", "friend@videarn.com", "pass456", referrerCode)
+    assertTrue(user2Result.isSuccess)
+    val friend = user2Result.getOrThrow()
+    // Friend receives 100 base welcome + 50 referral bonus = 150 coins
+    assertEquals(150L, friend.coins)
+    assertEquals(referrerCode, friend.referredBy)
+
+    // 4. Verify Referrer received bonus and stats incremented
+    val loadedReferrer = repo.allUsers.value.find { it.id == referrer.id }
+    assertNotNull(loadedReferrer)
+    assertEquals(150L, loadedReferrer!!.coins) // 100 base + 50 referral bonus
+    assertEquals(1, loadedReferrer.totalReferredCount)
+    assertEquals(50L, loadedReferralBonusEarned(loadedReferrer))
+
+    // 5. Test invalid referral code
+    val invalidResult = repo.signUp("Invalid Test", "invalid@videarn.com", "pass789", "NONEXISTENT999")
+    assertTrue(invalidResult.isFailure)
+
+    // 6. Test Direct link bonus claim
+    val directLinkClaim = repo.claimDirectLinkBonus(friend.id, 30L)
+    assertTrue(directLinkClaim)
+    val friendAfterBonus = repo.allUsers.value.find { it.id == friend.id }
+    assertNotNull(friendAfterBonus)
+    assertEquals(180L, friendAfterBonus!!.coins)
+  }
+
+  private fun loadedReferralBonusEarned(user: com.example.data.model.User): Long {
+    return user.totalReferralBonusEarned
+  }
 }

@@ -290,6 +290,7 @@ fun MainContent(viewModel: MainViewModel) {
             popunderUrlToLaunch?.let { popUrl ->
                 AdSterraPopunderDialog(
                     popunderUrl = popUrl,
+                    popunderScript = adminSettings.adSterraPopunderScript,
                     fallbackUrl = adminSettings.adSterraDirectLink,
                     onDismiss = { viewModel.clearPopunder() }
                 )

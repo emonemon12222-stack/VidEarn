@@ -36,6 +36,7 @@ fun AuthScreen(
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var referralCodeInput by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -234,6 +235,38 @@ fun AuthScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
                 )
 
+                // Optional Referral Code (Only in Sign Up)
+                if (isSignUp) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = referralCodeInput,
+                        onValueChange = { referralCodeInput = it.uppercase().filter { c -> c.isLetterOrDigit() } },
+                        placeholder = { Text("Referral Code (Optional) - e.g. RAHIM12", color = DarkTextMuted, fontSize = 13.sp) },
+                        leadingIcon = {
+                            Icon(Icons.Default.CardGiftcard, contentDescription = null, tint = CoinGold)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = DarkCard,
+                            unfocusedContainerColor = DarkCard,
+                            focusedBorderColor = CoinGold,
+                            unfocusedBorderColor = DarkCardBorder,
+                            focusedTextColor = CoinGold,
+                            unfocusedTextColor = CoinGold
+                        ),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "🎁 Enter a friend's referral code to claim +50 Extra Bonus Coins!",
+                        color = CoinGold.copy(alpha = 0.9f),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    )
+                }
+
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
@@ -252,7 +285,7 @@ fun AuthScreen(
                         isLoading = true
                         errorMessage = null
                         if (isSignUp) {
-                            viewModel.signUp(name, email, password) { success, msg ->
+                            viewModel.signUp(name, email, password, referralCodeInput) { success, msg ->
                                 isLoading = false
                                 if (!success) errorMessage = msg
                             }

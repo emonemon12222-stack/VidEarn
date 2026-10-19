@@ -2,18 +2,40 @@ package com.example.data.repository
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import com.example.data.firebase.FirestoreService
 import com.example.data.model.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+/**
+ * Single source of truth for VidEarn application state.
+ * Implements resilient dual-layer data persistence:
+ * 1. Cloud-backed Firebase Firestore with offline PersistentCacheSettings.
+ * 2. On-device protected SharedPreferences storage ensuring session, coin balances,
+ *    watched video histories, and uploaded videos survive app updates, process deaths,
+ *    and background refreshes.
+ */
 class AppRepository(context: Context) {
 
+    private val TAG = "AppRepository"
+    private val scope = CoroutineScope(Dispatchers.IO)
+
     private val prefs: SharedPreferences =
+        context.getSharedPreferences("videarn_prefs_v3", Context.MODE_PRIVATE)
+
+    // Legacy fallback prefs for smooth migration from v1/v2
+    private val legacyPrefs: SharedPreferences =
         context.getSharedPreferences("videarn_prefs", Context.MODE_PRIVATE)
+
+    private val firestoreService = FirestoreService(context)
 
     // Current User State
     private val _currentUser = MutableStateFlow<User?>(null)
@@ -22,6 +44,10 @@ class AppRepository(context: Context) {
     // Videos List
     private val _videos = MutableStateFlow<List<Video>>(emptyList())
     val videos: StateFlow<List<Video>> = _videos.asStateFlow()
+
+    // Watched Video History (UserId -> List of WatchedRecord)
+    private val _watchedHistory = MutableStateFlow<List<WatchedRecord>>(emptyList())
+    val watchedHistory: StateFlow<List<WatchedRecord>> = _watchedHistory.asStateFlow()
 
     // Withdrawal Requests
     private val _withdrawals = MutableStateFlow<List<WithdrawalRequest>>(emptyList())
@@ -48,6 +74,7 @@ class AppRepository(context: Context) {
     val allUsers: StateFlow<List<User>> = _allUsers.asStateFlow()
 
     init {
+        migrateLegacyDataIfNecessary()
         loadSettings()
         loadUsers()
         loadVideos()
@@ -58,9 +85,70 @@ class AppRepository(context: Context) {
         restoreSession()
     }
 
+    // ---------------- APP MIGRATION & SMOOTH UPDATES ----------------
+
+    /**
+     * Seamlessly migrates existing user data, session, coins, and uploads from
+     * older versions (videarn_prefs) into the current persistent store.
+     */
+    private fun migrateLegacyDataIfNecessary() {
+        try {
+            if (!prefs.contains("migration_completed")) {
+                if (legacyPrefs.contains("logged_in_user_id")) {
+                    val legacyUserId = legacyPrefs.getString("logged_in_user_id", null)
+                    if (legacyUserId != null) {
+                        prefs.edit().putString("logged_in_user_id", legacyUserId).apply()
+                    }
+                }
+                if (legacyPrefs.contains("users_db")) {
+                    val legacyUsers = legacyPrefs.getString("users_db", null)
+                    if (legacyUsers != null) {
+                        prefs.edit().putString("users_db", legacyUsers).apply()
+                    }
+                }
+                if (legacyPrefs.contains("videos_db")) {
+                    val legacyVideos = legacyPrefs.getString("videos_db", null)
+                    if (legacyVideos != null) {
+                        prefs.edit().putString("videos_db", legacyVideos).apply()
+                    }
+                }
+                if (legacyPrefs.contains("withdrawals_db")) {
+                    val legacyWithdrawals = legacyPrefs.getString("withdrawals_db", null)
+                    if (legacyWithdrawals != null) {
+                        prefs.edit().putString("withdrawals_db", legacyWithdrawals).apply()
+                    }
+                }
+                if (legacyPrefs.contains("transactions_db")) {
+                    val legacyTx = legacyPrefs.getString("transactions_db", null)
+                    if (legacyTx != null) {
+                        prefs.edit().putString("transactions_db", legacyTx).apply()
+                    }
+                }
+                prefs.edit().putBoolean("migration_completed", true).apply()
+                Log.d(TAG, "Legacy data migration completed successfully.")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Migration check warning: ${e.message}")
+        }
+    }
+
     // ---------------- AUTHENTICATION & USERS ----------------
 
-    fun signUp(name: String, email: String, pass: String): Result<User> {
+    /**
+     * Generates a unique, user-branded Referral Code based on user's name & UID
+     */
+    fun generateReferralCode(name: String, userId: String): String {
+        val cleanName = name.trim().filter { it.isLetterOrDigit() }.uppercase()
+        val prefix = if (cleanName.length >= 3) cleanName.take(5) else "VID"
+        val suffix = if (userId.length >= 4) {
+            userId.takeLast(4).uppercase().filter { it.isLetterOrDigit() }.padStart(4, '7')
+        } else {
+            (1000..9999).random().toString()
+        }
+        return "$prefix$suffix"
+    }
+
+    fun signUp(name: String, email: String, pass: String, inputReferralCode: String = ""): Result<User> {
         val trimmedEmail = email.trim().lowercase()
         val usersJson = prefs.getString("users_db", "{}") ?: "{}"
         val usersObj = JSONObject(usersJson)
@@ -69,32 +157,69 @@ class AppRepository(context: Context) {
             return Result.failure(Exception("Email already registered"))
         }
 
+        val trimmedRefCode = inputReferralCode.trim().uppercase()
+        var referrerUser: User? = null
+        if (trimmedRefCode.isNotBlank()) {
+            // Find referrer in loaded users or local database
+            referrerUser = _allUsers.value.find { it.referralCode.equals(trimmedRefCode, ignoreCase = true) }
+            if (referrerUser == null) {
+                val keys = usersObj.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val uObj = usersObj.getJSONObject(k)
+                    if (uObj.optString("referralCode").equals(trimmedRefCode, ignoreCase = true)) {
+                        referrerUser = deserializeUser(uObj)
+                        break
+                    }
+                }
+            }
+            if (referrerUser == null) {
+                return Result.failure(Exception("Referral code '$trimmedRefCode' not found. Please check or leave empty."))
+            }
+        }
+
+        val newUserId = UUID.randomUUID().toString()
+        val generatedCode = generateReferralCode(name, newUserId)
+        val refBonusNewUser = if (referrerUser != null) _adminSettings.value.referralBonusNewUser else 0L
+        val initialCoins = 100L + refBonusNewUser // 100 Base Welcome Bonus + Referral Bonus if referred
+
         val newUser = User(
-            id = UUID.randomUUID().toString(),
+            id = newUserId,
             name = name.trim(),
             email = trimmedEmail,
             avatarUrl = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-            coins = 100, // Welcome bonus
-            referralCode = "REF" + (1000..9999).random()
+            coins = initialCoins,
+            referralCode = generatedCode,
+            referredBy = if (referrerUser != null) trimmedRefCode else "",
+            totalReferredCount = 0,
+            totalReferralBonusEarned = 0L,
+            joinedAt = System.currentTimeMillis()
         )
 
-        val userRecord = JSONObject().apply {
-            put("id", newUser.id)
-            put("name", newUser.name)
-            put("email", newUser.email)
+        val userRecord = serializeUser(newUser).apply {
             put("password", pass)
-            put("coins", newUser.coins)
-            put("role", newUser.role)
-            put("isBanned", newUser.isBanned)
-            put("referralCode", newUser.referralCode)
-            put("joinedAt", newUser.joinedAt)
         }
 
         usersObj.put(trimmedEmail, userRecord)
         prefs.edit().putString("users_db", usersObj.toString()).apply()
 
-        // Add welcome transaction
+        // Base Welcome transaction
         addTransaction(newUser.id, "Welcome Bonus", 100, true)
+
+        // Referral reward execution for both parties
+        if (referrerUser != null) {
+            val refBonusReferrer = _adminSettings.value.referralBonusReferrer
+            addTransaction(newUser.id, "Referral Bonus (Code: $trimmedRefCode)", refBonusNewUser, true)
+
+            // Reward Referrer directly & update referral stats
+            val updatedReferrer = referrerUser.copy(
+                coins = referrerUser.coins + refBonusReferrer,
+                totalReferredCount = referrerUser.totalReferredCount + 1,
+                totalReferralBonusEarned = referrerUser.totalReferralBonusEarned + refBonusReferrer
+            )
+            updateUserInDb(updatedReferrer)
+            addTransaction(referrerUser.id, "Referral Reward (${newUser.name} joined)", refBonusReferrer, true)
+        }
 
         saveSession(newUser)
         loadUsers()
@@ -120,18 +245,7 @@ class AppRepository(context: Context) {
             return Result.failure(Exception("This account has been suspended by admin."))
         }
 
-        val user = User(
-            id = userObj.getString("id"),
-            name = userObj.getString("name"),
-            email = trimmedEmail,
-            avatarUrl = userObj.optString("avatarUrl", "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150"),
-            coins = userObj.optLong("coins", 100),
-            role = userObj.optString("role", "USER"),
-            isBanned = userObj.optBoolean("isBanned", false),
-            referralCode = userObj.optString("referralCode", "REF7721"),
-            joinedAt = userObj.optLong("joinedAt", System.currentTimeMillis())
-        )
-
+        val user = deserializeUser(userObj)
         saveSession(user)
         return Result.success(user)
     }
@@ -143,37 +257,95 @@ class AppRepository(context: Context) {
             email = "demo@videarn.com",
             avatarUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
             coins = 250,
-            referralCode = "DEMO99"
+            referralCode = "DEMO99",
+            referredBy = "",
+            totalReferredCount = 5,
+            totalReferralBonusEarned = 250L
         )
         saveSession(guest)
         return guest
     }
 
     fun signOut() {
-        prefs.edit().remove("logged_in_user_id").apply()
+        prefs.edit()
+            .remove("logged_in_user_id")
+            .remove("active_user_session_json")
+            .apply()
         _currentUser.value = null
+        _watchedHistory.value = emptyList()
     }
 
     private fun saveSession(user: User) {
         _currentUser.value = user
-        prefs.edit().putString("logged_in_user_id", user.id).apply()
+        prefs.edit()
+            .putString("logged_in_user_id", user.id)
+            .putString("active_user_session_json", serializeUser(user).toString())
+            .apply()
+
         updateUserInDb(user)
+
+        // Sync directly to Firestore
+        firestoreService.syncUser(user)
+        loadWatchedHistoryForUser(user.id)
     }
 
     private fun restoreSession() {
         val userId = prefs.getString("logged_in_user_id", null) ?: return
-        val user = _allUsers.value.find { it.id == userId }
-        if (user != null && !user.isBanned) {
-            _currentUser.value = user
-        } else if (userId == "guest_user") {
-            _currentUser.value = User(
-                id = "guest_user",
-                name = "Demo User",
-                email = "demo@videarn.com",
-                avatarUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-                coins = 250,
-                referralCode = "DEMO99"
-            )
+
+        // 1. Direct restore from serialized active session JSON
+        val savedSession = prefs.getString("active_user_session_json", null)
+        if (savedSession != null) {
+            try {
+                val parsed = deserializeUser(JSONObject(savedSession))
+                if (!parsed.isBanned) {
+                    _currentUser.value = parsed
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error restoring saved session JSON: ${e.message}")
+            }
+        }
+
+        // 2. Fallback to allUsers search
+        if (_currentUser.value == null) {
+            val user = _allUsers.value.find { it.id == userId }
+            if (user != null && !user.isBanned) {
+                _currentUser.value = user
+            } else if (userId == "guest_user") {
+                _currentUser.value = User(
+                    id = "guest_user",
+                    name = "Demo User",
+                    email = "demo@videarn.com",
+                    avatarUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+                    coins = 250,
+                    referralCode = "DEMO99"
+                )
+            }
+        }
+
+        // 3. Sync and reconcile with Firestore cloud state
+        val activeUser = _currentUser.value
+        if (activeUser != null) {
+            loadWatchedHistoryForUser(activeUser.id)
+            firestoreService.fetchUser(activeUser.id) { cloudUser ->
+                if (cloudUser != null && !cloudUser.isBanned) {
+                    // Retain the higher coin balance to guarantee zero coin loss
+                    val mergedCoins = maxOf(activeUser.coins, cloudUser.coins)
+                    val merged = cloudUser.copy(coins = mergedCoins)
+                    _currentUser.value = merged
+                    updateUserInDb(merged)
+                }
+            }
+
+            // Real-time listener
+            firestoreService.observeUser(activeUser.id) { updatedFromCloud ->
+                if (!updatedFromCloud.isBanned) {
+                    val current = _currentUser.value
+                    val bestCoins = if (current != null) maxOf(current.coins, updatedFromCloud.coins) else updatedFromCloud.coins
+                    val finalUser = updatedFromCloud.copy(coins = bestCoins)
+                    _currentUser.value = finalUser
+                    updateUserInDb(finalUser)
+                }
+            }
         }
     }
 
@@ -181,35 +353,30 @@ class AppRepository(context: Context) {
         val usersJson = prefs.getString("users_db", null)
         val list = mutableListOf<User>()
         if (usersJson != null) {
-            val obj = JSONObject(usersJson)
-            val keys = obj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val u = obj.getJSONObject(key)
-                list.add(
-                    User(
-                        id = u.optString("id", UUID.randomUUID().toString()),
-                        name = u.optString("name", "User"),
-                        email = u.optString("email", key),
-                        avatarUrl = u.optString("avatarUrl", ""),
-                        coins = u.optLong("coins", 100),
-                        role = u.optString("role", "USER"),
-                        isBanned = u.optBoolean("isBanned", false),
-                        referralCode = u.optString("referralCode", "REF000"),
-                        joinedAt = u.optLong("joinedAt", System.currentTimeMillis())
-                    )
-                )
+            try {
+                val obj = JSONObject(usersJson)
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val u = obj.getJSONObject(key)
+                    list.add(deserializeUser(u))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error loading users_db: ${e.message}")
             }
         }
         if (list.isEmpty()) {
-            // Seed a sample user
+            // Seed sample users with referral codes
             val sample = User(
                 id = "usr_sample1",
                 name = "Rahim Ahmed",
                 email = "rahim@gmail.com",
                 avatarUrl = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
                 coins = 480,
-                referralCode = "RAHIM12"
+                referralCode = "RAHIM12",
+                referredBy = "",
+                totalReferredCount = 3,
+                totalReferralBonusEarned = 150L
             )
             list.add(sample)
         }
@@ -220,6 +387,7 @@ class AppRepository(context: Context) {
         val usersJson = prefs.getString("users_db", "{}") ?: "{}"
         val usersObj = JSONObject(usersJson)
         val keys = usersObj.keys()
+        var found = false
         while (keys.hasNext()) {
             val key = keys.next()
             val u = usersObj.getJSONObject(key)
@@ -227,11 +395,25 @@ class AppRepository(context: Context) {
                 u.put("coins", user.coins)
                 u.put("isBanned", user.isBanned)
                 u.put("name", user.name)
+                u.put("referralCode", user.referralCode)
+                u.put("referredBy", user.referredBy)
+                u.put("totalReferredCount", user.totalReferredCount)
+                u.put("totalReferralBonusEarned", user.totalReferralBonusEarned)
                 usersObj.put(key, u)
+                found = true
                 break
             }
         }
-        prefs.edit().putString("users_db", usersObj.toString()).apply()
+        if (!found && user.email.isNotBlank()) {
+            usersObj.put(user.email, serializeUser(user))
+        }
+        prefs.edit()
+            .putString("users_db", usersObj.toString())
+            .putString("active_user_session_json", serializeUser(user).toString())
+            .apply()
+
+        // Also sync to Firestore
+        firestoreService.syncUser(user)
         loadUsers()
     }
 
@@ -244,6 +426,40 @@ class AppRepository(context: Context) {
         if (found != null) {
             updateUserInDb(found)
         }
+    }
+
+    private fun serializeUser(user: User): JSONObject {
+        return JSONObject().apply {
+            put("id", user.id)
+            put("name", user.name)
+            put("email", user.email)
+            put("avatarUrl", user.avatarUrl)
+            put("coins", user.coins)
+            put("role", user.role)
+            put("isBanned", user.isBanned)
+            put("referralCode", user.referralCode)
+            put("referredBy", user.referredBy)
+            put("totalReferredCount", user.totalReferredCount)
+            put("totalReferralBonusEarned", user.totalReferralBonusEarned)
+            put("joinedAt", user.joinedAt)
+        }
+    }
+
+    private fun deserializeUser(obj: JSONObject): User {
+        return User(
+            id = obj.optString("id", UUID.randomUUID().toString()),
+            name = obj.optString("name", "User"),
+            email = obj.optString("email", ""),
+            avatarUrl = obj.optString("avatarUrl", ""),
+            coins = obj.optLong("coins", 100),
+            role = obj.optString("role", "USER"),
+            isBanned = obj.optBoolean("isBanned", false),
+            referralCode = obj.optString("referralCode", "REF7721"),
+            referredBy = obj.optString("referredBy", ""),
+            totalReferredCount = obj.optInt("totalReferredCount", 0),
+            totalReferralBonusEarned = obj.optLong("totalReferralBonusEarned", 0L),
+            joinedAt = obj.optLong("joinedAt", System.currentTimeMillis())
+        )
     }
 
     // ---------------- COIN REWARDS & BALANCE ----------------
@@ -278,13 +494,25 @@ class AppRepository(context: Context) {
         return false
     }
 
+    /**
+     * Awards direct bonus coins when user opens and explores AdSterra Direct Link sponsor offer
+     */
+    fun claimDirectLinkBonus(userId: String, bonusCoins: Long = 30): Boolean {
+        addCoins(userId, bonusCoins, "AdSterra Partner Direct Link Reward")
+        return true
+    }
+
     private fun addTransaction(userId: String, title: String, amount: Long, isCredit: Boolean) {
+        val tx = CoinTransaction(UUID.randomUUID().toString(), title, amount, isCredit)
         val map = _transactions.value.toMutableMap()
         val list = map[userId]?.toMutableList() ?: mutableListOf()
-        list.add(0, CoinTransaction(UUID.randomUUID().toString(), title, amount, isCredit))
+        list.add(0, tx)
         map[userId] = list
         _transactions.value = map
         saveTransactions(map)
+
+        // Sync transaction to Firestore linked to user ID
+        firestoreService.syncTransaction(userId, tx)
     }
 
     private fun saveTransactions(map: Map<String, List<CoinTransaction>>) {
@@ -308,237 +536,201 @@ class AppRepository(context: Context) {
 
     private fun loadTransactions() {
         val str = prefs.getString("transactions_db", null) ?: return
-        val obj = JSONObject(str)
-        val map = mutableMapOf<String, List<CoinTransaction>>()
-        val keys = obj.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val arr = obj.getJSONArray(key)
-            val list = mutableListOf<CoinTransaction>()
-            for (i in 0 until arr.length()) {
-                val item = arr.getJSONObject(i)
-                list.add(
-                    CoinTransaction(
-                        id = item.getString("id"),
-                        title = item.getString("title"),
-                        amount = item.getLong("amount"),
-                        isCredit = item.getBoolean("isCredit"),
-                        timestamp = item.getLong("timestamp")
-                    )
-                )
-            }
-            map[key] = list
-        }
-        _transactions.value = map
-    }
-
-    // ---------------- VIDEOS (FEED, SHORTS, WATCH) ----------------
-
-    private fun loadVideos() {
-        val seedVersion = prefs.getInt("videos_version_v2", 0)
-        val saved = prefs.getString("videos_db", null)
-        if (saved != null && seedVersion >= 2) {
-            try {
-                val arr = JSONArray(saved)
-                val list = mutableListOf<Video>()
+        try {
+            val obj = JSONObject(str)
+            val map = mutableMapOf<String, List<CoinTransaction>>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val arr = obj.getJSONArray(key)
+                val list = mutableListOf<CoinTransaction>()
                 for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
+                    val item = arr.getJSONObject(i)
                     list.add(
-                        Video(
-                            id = obj.getString("id"),
-                            title = obj.getString("title"),
-                            description = obj.optString("description", ""),
-                            videoUrl = obj.getString("videoUrl"),
-                            type = VideoType.valueOf(obj.optString("type", "LONG")),
-                            thumbnailUrl = obj.optString("thumbnailUrl", "").ifBlank {
-                                com.example.util.YouTubeHelper.getThumbnailUrl(obj.getString("videoUrl"))
-                            },
-                            channelName = obj.optString("channelName", "Creator"),
-                            channelAvatar = obj.optString("channelAvatar", ""),
-                            views = obj.optLong("views", 100),
-                            likes = obj.optLong("likes", 10),
-                            isLiked = obj.optBoolean("isLiked", false),
-                            commentsCount = obj.optInt("commentsCount", 0),
-                            durationLabel = obj.optString("durationLabel", "02:15"),
-                            uploaderId = obj.optString("uploaderId", "official"),
-                            category = obj.optString("category", "Trending"),
-                            rewardCoins = obj.optInt("rewardCoins", 25),
-                            createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+                        CoinTransaction(
+                            id = item.getString("id"),
+                            title = item.getString("title"),
+                            amount = item.getLong("amount"),
+                            isCredit = item.getBoolean("isCredit"),
+                            timestamp = item.getLong("timestamp")
                         )
                     )
                 }
-                _videos.value = list
-                return
+                map[key] = list
+            }
+            _transactions.value = map
+        } catch (e: Exception) {
+            Log.w(TAG, "Error loading transactions: ${e.message}")
+        }
+    }
+
+    // ---------------- WATCHED VIDEO HISTORY (STATE RETENTION) ----------------
+
+    /**
+     * Records that the user watched a video and earned coins.
+     * Saved to local SharedPreferences and synced directly to Firestore /users/{userId}/watched_history
+     */
+    fun recordWatchedVideo(userId: String, videoId: String, videoTitle: String, earnedCoins: Int) {
+        val record = WatchedRecord(
+            id = UUID.randomUUID().toString(),
+            videoId = videoId,
+            userId = userId,
+            videoTitle = videoTitle,
+            timestamp = System.currentTimeMillis(),
+            earnedCoins = earnedCoins
+        )
+
+        val updated = listOf(record) + _watchedHistory.value.filterNot { it.videoId == videoId }
+        _watchedHistory.value = updated
+        saveWatchedHistoryForUser(userId, updated)
+
+        // Sync to cloud Firestore
+        firestoreService.recordWatchedVideo(record)
+    }
+
+    private fun saveWatchedHistoryForUser(userId: String, list: List<WatchedRecord>) {
+        val arr = JSONArray()
+        for (r in list.take(100)) {
+            arr.put(
+                JSONObject().apply {
+                    put("id", r.id)
+                    put("videoId", r.videoId)
+                    put("userId", r.userId)
+                    put("videoTitle", r.videoTitle)
+                    put("timestamp", r.timestamp)
+                    put("earnedCoins", r.earnedCoins)
+                }
+            )
+        }
+        prefs.edit().putString("watched_history_$userId", arr.toString()).apply()
+    }
+
+    private fun loadWatchedHistoryForUser(userId: String) {
+        val saved = prefs.getString("watched_history_$userId", null)
+        val list = mutableListOf<WatchedRecord>()
+        if (saved != null) {
+            try {
+                val arr = JSONArray(saved)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    list.add(
+                        WatchedRecord(
+                            id = obj.getString("id"),
+                            videoId = obj.getString("videoId"),
+                            userId = obj.getString("userId"),
+                            videoTitle = obj.optString("videoTitle", ""),
+                            timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                            earnedCoins = obj.optInt("earnedCoins", 0)
+                        )
+                    )
+                }
             } catch (e: Exception) {
-                // fallback to seeds
+                Log.w(TAG, "Error parsing watched history: ${e.message}")
+            }
+        }
+        _watchedHistory.value = list
+
+        // Fetch cloud watched history to merge
+        firestoreService.fetchWatchedHistory(userId) { cloudList ->
+            if (cloudList.isNotEmpty()) {
+                val combined = (cloudList + _watchedHistory.value)
+                    .distinctBy { it.videoId }
+                    .sortedByDescending { it.timestamp }
+                _watchedHistory.value = combined
+                saveWatchedHistoryForUser(userId, combined)
+            }
+        }
+    }
+
+    // ---------------- VIDEOS (PROTECTED USER UPLOADS & SEEDS) ----------------
+
+    private fun loadVideos() {
+        val defaultVideos = getPreSeededVideos()
+        val userUploadedVideos = loadUserUploadedVideosFromPrefs()
+
+        val savedAll = prefs.getString("videos_db", null)
+        val allSavedList = mutableListOf<Video>()
+        if (savedAll != null) {
+            try {
+                val arr = JSONArray(savedAll)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    allSavedList.add(deserializeVideo(obj))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error parsing videos_db: ${e.message}")
             }
         }
 
-        // Pre-seeded high quality YouTube Shorts & Long videos
-        val defaultVideos = listOf(
-            // --- SHORTS (Vertical YouTube Shorts) ---
-            Video(
-                id = "short_1",
-                title = "Most Satisfying Kinetic Sand & Neon Art ✂️ #shorts",
-                description = "Ultra satisfying neon art cutting. Watch 10s to earn instant coins!",
-                videoUrl = "https://www.youtube.com/shorts/50_4e0K9_Y8",
-                type = VideoType.SHORT,
-                thumbnailUrl = "https://img.youtube.com/vi/50_4e0K9_Y8/hqdefault.jpg",
-                channelName = "SatisfyingVibes",
-                channelAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100",
-                views = 42800,
-                likes = 3120,
-                commentsCount = 84,
-                durationLabel = "00:15",
-                rewardCoins = 15,
-                category = "Shorts"
-            ),
-            Video(
-                id = "short_2",
-                title = "Insane 3D Drone Formation Light Show 🌟 #shorts",
-                description = "Futuristic 1000 drone formation over the city night lights.",
-                videoUrl = "https://www.youtube.com/shorts/k9GjF8eP210",
-                type = VideoType.SHORT,
-                thumbnailUrl = "https://img.youtube.com/vi/k9GjF8eP210/hqdefault.jpg",
-                channelName = "TechFuturism",
-                channelAvatar = "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100",
-                views = 89400,
-                likes = 7450,
-                commentsCount = 210,
-                durationLabel = "00:20",
-                rewardCoins = 15,
-                category = "Tech"
-            ),
-            Video(
-                id = "short_3",
-                title = "Amazing Basketball Trickshot Dunks 🏀 #shorts",
-                description = "Watch till the end for the 360 between-the-legs windmill dunk!",
-                videoUrl = "https://www.youtube.com/shorts/4V90Aky6_w0",
-                type = VideoType.SHORT,
-                thumbnailUrl = "https://img.youtube.com/vi/4V90Aky6_w0/hqdefault.jpg",
-                channelName = "HoopDaily",
-                channelAvatar = "https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=100",
-                views = 152000,
-                likes = 12900,
-                commentsCount = 430,
-                durationLabel = "00:18",
-                rewardCoins = 15,
-                category = "Sports"
-            ),
-            Video(
-                id = "short_4",
-                title = "5 Second Life Hack That Saves Hundreds of Dollars 💡 #shorts",
-                description = "Quick finance life hack for online shopping discount codes.",
-                videoUrl = "https://www.youtube.com/shorts/L_LUpnjgPso",
-                type = VideoType.SHORT,
-                thumbnailUrl = "https://img.youtube.com/vi/L_LUpnjgPso/hqdefault.jpg",
-                channelName = "MoneyHacks",
-                channelAvatar = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100",
-                views = 68000,
-                likes = 5400,
-                commentsCount = 142,
-                durationLabel = "00:15",
-                rewardCoins = 15,
-                category = "Earning"
-            ),
+        // Merge user uploads + saved + defaults without duplicates, prioritizing user uploads
+        val combinedMap = linkedMapOf<String, Video>()
+        // 1. User uploaded videos have the highest priority
+        for (v in userUploadedVideos) {
+            combinedMap[v.id] = v
+        }
+        // 2. Saved videos from database
+        for (v in allSavedList) {
+            if (!combinedMap.containsKey(v.id)) {
+                combinedMap[v.id] = v
+            }
+        }
+        // 3. Pre-seeded fallback videos
+        for (v in defaultVideos) {
+            if (!combinedMap.containsKey(v.id)) {
+                combinedMap[v.id] = v
+            }
+        }
 
-            // --- LONG VIDEOS (YouTube Standard) ---
-            Video(
-                id = "long_1",
-                title = "How to Make Online Income Watching Videos & Doing Tasks in 2026",
-                description = "Step-by-step complete blueprint for beginners to withdraw earnings directly to bKash, Nagad, or Binance.",
-                videoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                type = VideoType.LONG,
-                thumbnailUrl = "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
-                channelName = "PassiveIncomeBD",
-                channelAvatar = "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100",
-                views = 284000,
-                likes = 18400,
-                commentsCount = 760,
-                durationLabel = "14:20",
-                rewardCoins = 30,
-                category = "Earning"
-            ),
-            Video(
-                id = "long_2",
-                title = "The First Video Ever on YouTube - Me at the zoo (Historical)",
-                description = "Historic YouTube milestone video recorded at the San Diego Zoo.",
-                videoUrl = "https://www.youtube.com/watch?v=jNQXAC9IVRw",
-                type = VideoType.LONG,
-                thumbnailUrl = "https://img.youtube.com/vi/jNQXAC9IVRw/hqdefault.jpg",
-                channelName = "jawed",
-                channelAvatar = "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=100",
-                views = 310000000,
-                likes = 15000000,
-                commentsCount = 11200000,
-                durationLabel = "00:19",
-                rewardCoins = 30,
-                category = "Tutorial"
-            ),
-            Video(
-                id = "long_3",
-                title = "Top Tech Innovations & Futuristic Gadgets That Blew My Mind",
-                description = "Futuristic gadgets, artificial intelligence, and smart robotics breakdown.",
-                videoUrl = "https://www.youtube.com/watch?v=fJ9rUzIMcZQ",
-                type = VideoType.LONG,
-                thumbnailUrl = "https://img.youtube.com/vi/fJ9rUzIMcZQ/hqdefault.jpg",
-                channelName = "TechPulse",
-                channelAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
-                views = 142000,
-                likes = 11300,
-                commentsCount = 520,
-                durationLabel = "11:10",
-                rewardCoins = 30,
-                category = "Tech"
-            ),
-            Video(
-                id = "long_4",
-                title = "Cybersecurity Essentials: Prevent Phone Hacks & Secure Your bKash/Nagad PIN",
-                description = "Crucial protection tips against SMS phishing, fake OTP scams, and social engineering.",
-                videoUrl = "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
-                type = VideoType.LONG,
-                thumbnailUrl = "https://img.youtube.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
-                channelName = "CyberShield",
-                channelAvatar = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100",
-                views = 73000,
-                likes = 6400,
-                commentsCount = 290,
-                durationLabel = "09:30",
-                rewardCoins = 30,
-                category = "Tech"
-            )
-        )
+        val finalVideos = combinedMap.values.toList()
+        _videos.value = finalVideos
+        saveVideos(finalVideos)
 
-        _videos.value = defaultVideos
-        prefs.edit().putInt("videos_version_v2", 2).apply()
-        saveVideos(defaultVideos)
+        // Fetch any new videos from Firestore cloud
+        firestoreService.fetchVideos { cloudVideos ->
+            if (cloudVideos.isNotEmpty()) {
+                val merged = (userUploadedVideos + cloudVideos + _videos.value)
+                    .distinctBy { it.id }
+                _videos.value = merged
+                saveVideos(merged)
+            }
+        }
+    }
+
+    /**
+     * User-uploaded videos are stored in a dedicated key that is NEVER touched or overwritten
+     * by default seed updates or app migrations.
+     */
+    private fun loadUserUploadedVideosFromPrefs(): List<Video> {
+        val saved = prefs.getString("user_uploaded_videos_db", null) ?: return emptyList()
+        val list = mutableListOf<Video>()
+        try {
+            val arr = JSONArray(saved)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(deserializeVideo(obj))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error loading user_uploaded_videos_db: ${e.message}")
+        }
+        return list
+    }
+
+    private fun saveUserUploadedVideosToPrefs(list: List<Video>) {
+        val userUploads = list.filter { it.uploaderId != "official" }
+        val arr = JSONArray()
+        for (v in userUploads) {
+            arr.put(serializeVideo(v))
+        }
+        prefs.edit().putString("user_uploaded_videos_db", arr.toString()).apply()
     }
 
     private fun saveVideos(list: List<Video>) {
         val arr = JSONArray()
         for (v in list) {
-            val obj = JSONObject().apply {
-                put("id", v.id)
-                put("title", v.title)
-                put("description", v.description)
-                put("videoUrl", v.videoUrl)
-                put("type", v.type.name)
-                put("thumbnailUrl", v.thumbnailUrl)
-                put("channelName", v.channelName)
-                put("channelAvatar", v.channelAvatar)
-                put("views", v.views)
-                put("likes", v.likes)
-                put("isLiked", v.isLiked)
-                put("commentsCount", v.commentsCount)
-                put("durationLabel", v.durationLabel)
-                put("uploaderId", v.uploaderId)
-                put("category", v.category)
-                put("rewardCoins", v.rewardCoins)
-                put("createdAt", v.createdAt)
-            }
-            arr.put(obj)
+            arr.put(serializeVideo(v))
         }
         prefs.edit().putString("videos_db", arr.toString()).apply()
+        saveUserUploadedVideosToPrefs(list)
     }
 
     fun addVideo(
@@ -551,7 +743,6 @@ class AppRepository(context: Context) {
         uploaderId: String,
         uploaderName: String
     ): Video {
-        // Auto pick a reliable thumbnail if not provided
         val ytThumb = com.example.util.YouTubeHelper.getThumbnailUrl(url)
         val effectiveThumb = when {
             thumbnailUrl.isNotBlank() -> thumbnailUrl.trim()
@@ -579,6 +770,9 @@ class AppRepository(context: Context) {
         val updated = listOf(newVideo) + _videos.value
         _videos.value = updated
         saveVideos(updated)
+
+        // Sync directly to Firestore
+        firestoreService.syncVideo(newVideo)
 
         // Give upload reward
         addCoins(uploaderId, _adminSettings.value.coinsPerUpload.toLong(), "Reward for Uploading Video: '$title'")
@@ -612,47 +806,275 @@ class AppRepository(context: Context) {
         val updated = _videos.value.filterNot { it.id == videoId }
         _videos.value = updated
         saveVideos(updated)
+        firestoreService.deleteVideo(videoId)
+    }
+
+    private fun serializeVideo(v: Video): JSONObject {
+        return JSONObject().apply {
+            put("id", v.id)
+            put("title", v.title)
+            put("description", v.description)
+            put("videoUrl", v.videoUrl)
+            put("type", v.type.name)
+            put("thumbnailUrl", v.thumbnailUrl)
+            put("channelName", v.channelName)
+            put("channelAvatar", v.channelAvatar)
+            put("views", v.views)
+            put("likes", v.likes)
+            put("isLiked", v.isLiked)
+            put("commentsCount", v.commentsCount)
+            put("durationLabel", v.durationLabel)
+            put("uploaderId", v.uploaderId)
+            put("category", v.category)
+            put("rewardCoins", v.rewardCoins)
+            put("createdAt", v.createdAt)
+        }
+    }
+
+    private fun deserializeVideo(obj: JSONObject): Video {
+        val videoType = try {
+            VideoType.valueOf(obj.optString("type", "LONG"))
+        } catch (e: Exception) {
+            VideoType.LONG
+        }
+        return Video(
+            id = obj.getString("id"),
+            title = obj.getString("title"),
+            description = obj.optString("description", ""),
+            videoUrl = obj.getString("videoUrl"),
+            type = videoType,
+            thumbnailUrl = obj.optString("thumbnailUrl", "").ifBlank {
+                com.example.util.YouTubeHelper.getThumbnailUrl(obj.getString("videoUrl"))
+            },
+            channelName = obj.optString("channelName", "Creator"),
+            channelAvatar = obj.optString("channelAvatar", ""),
+            views = obj.optLong("views", 100),
+            likes = obj.optLong("likes", 10),
+            isLiked = obj.optBoolean("isLiked", false),
+            commentsCount = obj.optInt("commentsCount", 0),
+            durationLabel = obj.optString("durationLabel", "02:15"),
+            uploaderId = obj.optString("uploaderId", "official"),
+            category = obj.optString("category", "Trending"),
+            rewardCoins = obj.optInt("rewardCoins", 25),
+            createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+        )
+    }
+
+    private fun getPreSeededVideos(): List<Video> {
+        return listOf(
+            Video(
+                id = "short_1",
+                title = "Most Satisfying Kinetic Sand & Neon Art ✂️ #shorts",
+                description = "Ultra satisfying neon art cutting. Watch 10s to earn instant coins!",
+                videoUrl = "https://www.youtube.com/shorts/50_4e0K9_Y8",
+                type = VideoType.SHORT,
+                thumbnailUrl = "https://img.youtube.com/vi/50_4e0K9_Y8/hqdefault.jpg",
+                channelName = "SatisfyingVibes",
+                channelAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100",
+                views = 42800,
+                likes = 3120,
+                commentsCount = 84,
+                durationLabel = "00:15",
+                rewardCoins = 15,
+                category = "Shorts"
+            ),
+            Video(
+                id = "short_2",
+                title = "Insane 3D Drone Formation Light Show 🌟 #shorts",
+                description = "Futuristic 1000 drone formation over the city night lights.",
+                videoUrl = "https://www.youtube.com/shorts/k9GjF8eP210",
+                type = VideoType.SHORT,
+                thumbnailUrl = "https://img.youtube.com/vi/k9GjF8eP210/hqdefault.jpg",
+                channelName = "TechPulse",
+                channelAvatar = "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100",
+                views = 28400,
+                likes = 1890,
+                commentsCount = 210,
+                durationLabel = "00:20",
+                rewardCoins = 15,
+                category = "Tech"
+            ),
+            Video(
+                id = "short_3",
+                title = "Amazing Basketball Trickshot Dunks 🏀 #shorts",
+                description = "Watch till the end for the 360 between-the-legs windmill dunk!",
+                videoUrl = "https://www.youtube.com/shorts/4V90Aky6_w0",
+                type = VideoType.SHORT,
+                thumbnailUrl = "https://img.youtube.com/vi/4V90Aky6_w0/hqdefault.jpg",
+                channelName = "HoopMasters",
+                channelAvatar = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100",
+                views = 61200,
+                likes = 5410,
+                commentsCount = 430,
+                durationLabel = "00:18",
+                rewardCoins = 15,
+                category = "Sports"
+            ),
+            Video(
+                id = "short_4",
+                title = "5 Second Life Hack That Saves Hundreds of Dollars 💡 #shorts",
+                description = "Quick finance life hack for online shopping discount codes.",
+                videoUrl = "https://www.youtube.com/shorts/L_LUpnjgPso",
+                type = VideoType.SHORT,
+                thumbnailUrl = "https://img.youtube.com/vi/L_LUpnjgPso/hqdefault.jpg",
+                channelName = "MoneyMindset",
+                channelAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
+                views = 98100,
+                likes = 7200,
+                commentsCount = 890,
+                durationLabel = "00:12",
+                rewardCoins = 15,
+                category = "Earning"
+            ),
+            Video(
+                id = "long_1",
+                title = "How to Make Online Income Watching Videos & Doing Tasks in 2026",
+                description = "Step-by-step complete blueprint for beginners to withdraw earnings directly to bKash, Nagad, or Binance.",
+                videoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                type = VideoType.LONG,
+                thumbnailUrl = "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                channelName = "ProEarn Tips",
+                channelAvatar = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100",
+                views = 124000,
+                likes = 9400,
+                commentsCount = 760,
+                durationLabel = "14:20",
+                rewardCoins = 30,
+                category = "Earning"
+            ),
+            Video(
+                id = "long_2",
+                title = "The First Video Ever on YouTube - Me at the zoo (Historical)",
+                description = "Historic YouTube milestone video recorded at the San Diego Zoo.",
+                videoUrl = "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                type = VideoType.LONG,
+                thumbnailUrl = "https://img.youtube.com/vi/jNQXAC9IVRw/hqdefault.jpg",
+                channelName = "jawed",
+                channelAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100",
+                views = 310000000,
+                likes = 15000000,
+                commentsCount = 11200000,
+                durationLabel = "00:19",
+                rewardCoins = 30,
+                category = "Tutorial"
+            ),
+            Video(
+                id = "long_3",
+                title = "Top Tech Innovations & Futuristic Gadgets That Blew My Mind",
+                description = "Futuristic gadgets, artificial intelligence, and smart robotics breakdown.",
+                videoUrl = "https://www.youtube.com/watch?v=fJ9rUzIMcZQ",
+                type = VideoType.LONG,
+                thumbnailUrl = "https://img.youtube.com/vi/fJ9rUzIMcZQ/hqdefault.jpg",
+                channelName = "FutureTech Lab",
+                channelAvatar = "https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=100",
+                views = 85000,
+                likes = 4900,
+                commentsCount = 520,
+                durationLabel = "11:10",
+                rewardCoins = 30,
+                category = "Tech"
+            ),
+            Video(
+                id = "long_4",
+                title = "Cybersecurity Essentials: Prevent Phone Hacks & Secure Your bKash/Nagad PIN",
+                description = "Crucial protection tips against SMS phishing, fake OTP scams, and social engineering.",
+                videoUrl = "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
+                type = VideoType.LONG,
+                thumbnailUrl = "https://img.youtube.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
+                channelName = "CyberShield",
+                channelAvatar = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100",
+                views = 73000,
+                likes = 6400,
+                commentsCount = 290,
+                durationLabel = "09:30",
+                rewardCoins = 30,
+                category = "Tech"
+            )
+        )
     }
 
     // ---------------- COMMENTS ----------------
 
     private fun loadInitialComments() {
         val map = mutableMapOf<String, List<Comment>>()
-        map["short_1"] = listOf(
-            Comment("c1", "short_1", "Tanvir Hasan", "", "This is super satisfying to watch!", "2h ago", 14),
-            Comment("c2", "short_1", "Al Amin", "", "Got my 15 coins instant bonus!", "1h ago", 5)
-        )
         map["long_1"] = listOf(
-            Comment("c3", "long_1", "Sabbir Hossain", "", "Great explanation brother, just received my bKash payout today!", "5h ago", 48),
-            Comment("c4", "long_1", "Nasir Uddin", "", "Trusted platform. Thanks for the guidance.", "3h ago", 21)
+            Comment(
+                id = "c1",
+                videoId = "long_1",
+                userName = "Tamim Iqbal",
+                content = "Great earning app! Got my first 50 BDT payout instantly via bKash 🚀",
+                timestamp = "2 hours ago",
+                likes = 14
+            ),
+            Comment(
+                id = "c2",
+                videoId = "long_1",
+                userName = "Sadia Islam",
+                content = "Watching shorts daily gives really good bonus coins. Loved the UI!",
+                timestamp = "5 hours ago",
+                likes = 9
+            )
+        )
+        map["short_1"] = listOf(
+            Comment(
+                id = "c3",
+                videoId = "short_1",
+                userName = "Mehedi Hasan",
+                content = "So satisfying to watch! +15 coins claimed instantly 🔥",
+                timestamp = "1 hour ago",
+                likes = 22
+            )
         )
         _comments.value = map
     }
 
     fun addComment(videoId: String, userName: String, content: String) {
-        val map = _comments.value.toMutableMap()
-        val list = map[videoId]?.toMutableList() ?: mutableListOf()
         val newComment = Comment(
             id = UUID.randomUUID().toString(),
             videoId = videoId,
             userName = userName,
-            content = content,
+            userAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100",
+            content = content.trim(),
             timestamp = "Just now",
             likes = 0
         )
+        val map = _comments.value.toMutableMap()
+        val list = map[videoId]?.toMutableList() ?: mutableListOf()
         list.add(0, newComment)
-        map[videoId] = list
         _comments.value = map
 
-        // Increment count on video
-        val videos = _videos.value.map {
-            if (it.id == videoId) it.copy(commentsCount = it.commentsCount + 1) else it
+        val videos = _videos.value.map { v ->
+            if (v.id == videoId) v.copy(commentsCount = v.commentsCount + 1) else v
         }
         _videos.value = videos
         saveVideos(videos)
     }
 
-    // ---------------- WITHDRAWALS ----------------
+    fun addComment(videoId: String, content: String, user: User) {
+        val newComment = Comment(
+            id = UUID.randomUUID().toString(),
+            videoId = videoId,
+            userName = user.name,
+            userAvatar = user.avatarUrl,
+            content = content.trim(),
+            timestamp = "Just now",
+            likes = 0
+        )
+        val map = _comments.value.toMutableMap()
+        val list = map[videoId]?.toMutableList() ?: mutableListOf()
+        list.add(0, newComment)
+        map[videoId] = list
+        _comments.value = map
+
+        // Increment commentsCount on video
+        val videos = _videos.value.map { v ->
+            if (v.id == videoId) v.copy(commentsCount = v.commentsCount + 1) else v
+        }
+        _videos.value = videos
+        saveVideos(videos)
+    }
+
+    // ---------------- WITHDRAWALS (WALLET) ----------------
 
     private fun loadWithdrawals() {
         val saved = prefs.getString("withdrawals_db", null)
@@ -680,19 +1102,19 @@ class AppRepository(context: Context) {
                     )
                 }
             } catch (e: Exception) {
-                // empty
+                Log.w(TAG, "Error parsing withdrawals: ${e.message}")
             }
         }
         if (list.isEmpty()) {
-            // Seed a sample past approved withdrawal
+            // Seed a sample approved withdrawal for demonstration
             list.add(
                 WithdrawalRequest(
-                    id = "w_demo_101",
+                    id = "w_sample99",
                     userId = "usr_sample1",
                     userName = "Rahim Ahmed",
                     userEmail = "rahim@gmail.com",
                     method = PaymentMethod.BKASH,
-                    accountAddress = "01712345678",
+                    accountAddress = "01712-345678",
                     coinAmount = 1000,
                     payoutAmount = 10.0,
                     currency = "BDT",
@@ -744,7 +1166,6 @@ class AppRepository(context: Context) {
         val payout = coinAmount * _adminSettings.value.coinToBdtRate
         val currency = if (method == PaymentMethod.BINANCE) "USDT" else "BDT"
         val effectivePayout = if (method == PaymentMethod.BINANCE) {
-            // e.g. 1 BDT ~ 0.0085 USDT
             (payout / 120.0)
         } else {
             payout
@@ -773,6 +1194,10 @@ class AppRepository(context: Context) {
         val updated = listOf(request) + _withdrawals.value
         _withdrawals.value = updated
         saveWithdrawals(updated)
+
+        // Sync withdrawal to Firestore
+        firestoreService.syncWithdrawal(request)
+
         return Result.success(request)
     }
 
@@ -783,7 +1208,9 @@ class AppRepository(context: Context) {
                 if (w.status != WithdrawalStatus.REJECTED && newStatus == WithdrawalStatus.REJECTED) {
                     addCoins(w.userId, w.coinAmount, "Refund: Withdrawal #${w.id} Rejected ($adminNote)")
                 }
-                w.copy(status = newStatus, adminNote = adminNote)
+                val mod = w.copy(status = newStatus, adminNote = adminNote)
+                firestoreService.syncWithdrawal(mod)
+                mod
             } else w
         }
         _withdrawals.value = updated
