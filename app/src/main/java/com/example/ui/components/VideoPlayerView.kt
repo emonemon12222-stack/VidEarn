@@ -61,14 +61,11 @@ fun VideoPlayerView(
                         allowFileAccess = true
                         cacheMode = WebSettings.LOAD_DEFAULT
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        setSupportMultipleWindows(true)
+                        javaScriptCanOpenWindowsAutomatically = true
 
-                        // Clean user-agent: remove '; wv' and 'Version/4.0 ' so YouTube server
-                        // treats the request as a standard Chrome Mobile browser, bypassing embed restrictions
-                        val defaultUa = userAgentString
-                        val cleanUa = defaultUa
-                            .replace("; wv", "")
-                            .replace("Version/4.0 ", "")
-                        userAgentString = cleanUa
+                        // Use Desktop Chrome User-Agent to completely bypass YouTube embedding restrictions (Error 152-4)
+                        userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                     }
 
                     webChromeClient = object : WebChromeClient() {
@@ -79,7 +76,18 @@ fun VideoPlayerView(
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                            // Keep video playback requests within this WebView
+                            val url = request?.url?.toString()
+                            if (!url.isNullOrBlank() && (url.contains("youtube.com/watch") || url.contains("youtu.be/"))) {
+                                try {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                    return true
+                                } catch (e: Exception) {
+                                    // fallback
+                                }
+                            }
                             return false
                         }
                     }

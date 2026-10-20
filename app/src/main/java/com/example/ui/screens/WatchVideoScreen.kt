@@ -218,96 +218,136 @@ fun WatchVideoScreen(
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // Interactive Actions Bar (Like, Dislike, Share, Save)
+            // Interactive Actions Bar (Like, Watch on YouTube fallback, Share, Save)
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceAround
-                ) {
-                    // Like button
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = DarkCard,
-                        modifier = Modifier.clickable { viewModel.toggleLike(video) }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Fallback / Direct YouTube App Launch Button (Bypasses Error 152-4 and keeps coin timer running)
+                    Button(
+                        onClick = {
+                            try {
+                                val targetUrl = if (YouTubeHelper.isYouTubeUrl(video.videoUrl)) {
+                                    val vidId = YouTubeHelper.extractVideoId(video.videoUrl)
+                                    if (vidId != null) "https://www.youtube.com/watch?v=$vidId" else video.videoUrl
+                                } else {
+                                    video.videoUrl
+                                }
+                                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(targetUrl)).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                // ignore
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BrandRed,
+                            contentColor = Color.White
+                        )
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (video.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                contentDescription = "Like",
-                                tint = if (video.isLiked) BrandRed else Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${video.likes}",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Watch on Official YouTube App", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
 
-                    // Share button
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = DarkCard,
-                        modifier = Modifier.clickable {
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, video.title)
-                                putExtra(
-                                    Intent.EXTRA_TEXT,
-                                    "Watch '${video.title}' and earn instant coins on VidEarn! ${video.videoUrl}"
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
+                        // Like button
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = DarkCard,
+                            modifier = Modifier.clickable { viewModel.toggleLike(video) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (video.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                    contentDescription = "Like",
+                                    tint = if (video.isLiked) BrandRed else Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${video.likes}",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
-                            context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
                         }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = "Share",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Share",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
 
-                    // Download / Offline
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = DarkCard
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        // Share button
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = DarkCard,
+                            modifier = Modifier.clickable {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, video.title)
+                                    putExtra(
+                                        Intent.EXTRA_TEXT,
+                                        "Watch '${video.title}' and earn instant coins on VidEarn! ${video.videoUrl}"
+                                    )
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
+                            }
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.FileDownload,
-                                contentDescription = "Download",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Save",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Share",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Share",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // Download / Offline
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = DarkCard
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileDownload,
+                                    contentDescription = "Download",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Save",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
