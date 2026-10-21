@@ -32,16 +32,30 @@ class FirestoreService(private val context: Context) {
                 FirebaseApp.initializeApp(context)
             }
             val db = FirebaseFirestore.getInstance()
-            // Enable offline disk persistence
-            val settings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
-                .build()
-            db.firestoreSettings = settings
-            Log.d(TAG, "Firebase Firestore initialized with PersistentCacheSettings")
+            try {
+                // Configure persistent disk cache with unlimited capacity for resilient offline sync
+                val settings = FirebaseFirestoreSettings.Builder()
+                    .setLocalCacheSettings(
+                        PersistentCacheSettings.newBuilder()
+                            .setSizeBytes(FirebaseFirestoreSettings.CACHE_SIZE_UNLIMITED)
+                            .build()
+                    )
+                    .build()
+                db.firestoreSettings = settings
+                Log.d(TAG, "Firebase Firestore initialized with PersistentCacheSettings (unlimited)")
+            } catch (settingsError: Exception) {
+                // If firestoreSettings was already set during a previous launch in the same process,
+                // catch gracefully without discarding the active db instance
+                Log.d(TAG, "Firestore settings could not be altered (already initialized): ${settingsError.message}")
+            }
             db
         } catch (e: Throwable) {
-            Log.w(TAG, "Firestore initialization warning: ${e.message}")
-            null
+            Log.e(TAG, "Firestore initialization warning: ${e.message}", e)
+            try {
+                FirebaseFirestore.getInstance()
+            } catch (fallbackError: Throwable) {
+                null
+            }
         }
     }
 
@@ -118,6 +132,52 @@ class FirestoreService(private val context: Context) {
             }
             .addOnFailureListener { e ->
                 Log.w(TAG, "Firestore fetchUser failed: ${e.message}")
+                onUserLoaded(null)
+            }
+    }
+
+    /**
+     * Query a user by email to restore account even after clean install or update
+     */
+    fun fetchUserByEmail(email: String, onUserLoaded: (User?) -> Unit) {
+        val db = firestore ?: run {
+            onUserLoaded(null)
+            return
+        }
+        val trimmed = email.trim().lowercase()
+        if (trimmed.isBlank()) {
+            onUserLoaded(null)
+            return
+        }
+
+        db.collection(USERS_COLLECTION)
+            .whereEqualTo("email", trimmed)
+            .limit(1)
+            .get()
+            .addOnSuccessListener { snapshot ->
+                val doc = snapshot.documents.firstOrNull()
+                if (doc != null && doc.exists()) {
+                    val user = User(
+                        id = doc.getString("id") ?: doc.id,
+                        name = doc.getString("name") ?: "User",
+                        email = doc.getString("email") ?: trimmed,
+                        avatarUrl = doc.getString("avatarUrl") ?: "",
+                        coins = doc.getLong("coins") ?: 100L,
+                        role = doc.getString("role") ?: "USER",
+                        isBanned = doc.getBoolean("isBanned") ?: false,
+                        referralCode = doc.getString("referralCode") ?: "",
+                        referredBy = doc.getString("referredBy") ?: "",
+                        totalReferredCount = (doc.getLong("totalReferredCount") ?: 0L).toInt(),
+                        totalReferralBonusEarned = doc.getLong("totalReferralBonusEarned") ?: 0L,
+                        joinedAt = doc.getLong("joinedAt") ?: System.currentTimeMillis()
+                    )
+                    onUserLoaded(user)
+                } else {
+                    onUserLoaded(null)
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Firestore fetchUserByEmail failed: ${e.message}")
                 onUserLoaded(null)
             }
     }
@@ -297,6 +357,61 @@ class FirestoreService(private val context: Context) {
     }
 
     /**
+     * Fetches videos specifically uploaded by a user (guarantees restore on app update)
+     */
+    fun fetchVideosByUploader(uploaderId: String, onVideosLoaded: (List<Video>) -> Unit) {
+        val db = firestore ?: run {
+            onVideosLoaded(emptyList())
+            return
+        }
+        if (uploaderId.isBlank()) {
+            onVideosLoaded(emptyList())
+            return
+        }
+
+        db.collection(VIDEOS_COLLECTION)
+            .whereEqualTo("uploaderId", uploaderId)
+            .get()
+            .addOnSuccessListener { snapshots ->
+                val list = snapshots.documents.mapNotNull { doc ->
+                    try {
+                        val videoTypeStr = doc.getString("type") ?: "LONG"
+                        val videoType = try {
+                            VideoType.valueOf(videoTypeStr)
+                        } catch (e: Exception) {
+                            VideoType.LONG
+                        }
+                        Video(
+                            id = doc.getString("id") ?: doc.id,
+                            title = doc.getString("title") ?: "Video",
+                            description = doc.getString("description") ?: "",
+                            videoUrl = doc.getString("videoUrl") ?: "",
+                            type = videoType,
+                            thumbnailUrl = doc.getString("thumbnailUrl") ?: "",
+                            channelName = doc.getString("channelName") ?: "Creator",
+                            channelAvatar = doc.getString("channelAvatar") ?: "",
+                            views = doc.getLong("views") ?: 100L,
+                            likes = doc.getLong("likes") ?: 10L,
+                            isLiked = doc.getBoolean("isLiked") ?: false,
+                            commentsCount = (doc.getLong("commentsCount") ?: 0L).toInt(),
+                            durationLabel = doc.getString("durationLabel") ?: "02:30",
+                            uploaderId = doc.getString("uploaderId") ?: uploaderId,
+                            category = doc.getString("category") ?: "Trending",
+                            rewardCoins = (doc.getLong("rewardCoins") ?: 25L).toInt(),
+                            createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                onVideosLoaded(list)
+            }
+            .addOnFailureListener {
+                onVideosLoaded(emptyList())
+            }
+    }
+
+    /**
      * Deletes video from Firestore
      */
     fun deleteVideo(videoId: String) {
@@ -393,6 +508,52 @@ class FirestoreService(private val context: Context) {
 
         db.collection(WITHDRAWALS_COLLECTION).document(req.id)
             .set(data, SetOptions.merge())
+
+        db.collection(USERS_COLLECTION).document(req.userId)
+            .collection(WITHDRAWALS_COLLECTION).document(req.id)
+            .set(data, SetOptions.merge())
+    }
+
+    /**
+     * Restores withdrawal history for a user from Firestore
+     */
+    fun fetchWithdrawals(userId: String, onLoaded: (List<WithdrawalRequest>) -> Unit) {
+        val db = firestore ?: run {
+            onLoaded(emptyList())
+            return
+        }
+
+        db.collection(USERS_COLLECTION).document(userId)
+            .collection(WITHDRAWALS_COLLECTION)
+            .get()
+            .addOnSuccessListener { snapshots ->
+                val list = snapshots.documents.mapNotNull { doc ->
+                    try {
+                        val methodStr = doc.getString("method") ?: "BKASH"
+                        val statusStr = doc.getString("status") ?: "PENDING"
+                        WithdrawalRequest(
+                            id = doc.getString("id") ?: doc.id,
+                            userId = doc.getString("userId") ?: userId,
+                            userName = doc.getString("userName") ?: "User",
+                            userEmail = doc.getString("userEmail") ?: "",
+                            method = try { PaymentMethod.valueOf(methodStr) } catch (e: Exception) { PaymentMethod.BKASH },
+                            accountAddress = doc.getString("accountAddress") ?: "",
+                            coinAmount = doc.getLong("coinAmount") ?: 500L,
+                            payoutAmount = doc.getDouble("payoutAmount") ?: 5.0,
+                            currency = doc.getString("currency") ?: "BDT",
+                            status = try { WithdrawalStatus.valueOf(statusStr) } catch (e: Exception) { WithdrawalStatus.PENDING },
+                            adminNote = doc.getString("adminNote") ?: "",
+                            requestDate = doc.getLong("requestDate") ?: System.currentTimeMillis()
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                onLoaded(list)
+            }
+            .addOnFailureListener {
+                onLoaded(emptyList())
+            }
     }
 
     // ---------------- TRANSACTIONS SYNC ----------------
@@ -415,5 +576,38 @@ class FirestoreService(private val context: Context) {
         db.collection(USERS_COLLECTION).document(userId)
             .collection(TRANSACTIONS_COLLECTION).document(tx.id)
             .set(data, SetOptions.merge())
+    }
+
+    /**
+     * Restores transactions for a user from Firestore
+     */
+    fun fetchTransactions(userId: String, onLoaded: (List<CoinTransaction>) -> Unit) {
+        val db = firestore ?: run {
+            onLoaded(emptyList())
+            return
+        }
+
+        db.collection(USERS_COLLECTION).document(userId)
+            .collection(TRANSACTIONS_COLLECTION)
+            .get()
+            .addOnSuccessListener { snapshots ->
+                val list = snapshots.documents.mapNotNull { doc ->
+                    try {
+                        CoinTransaction(
+                            id = doc.getString("id") ?: doc.id,
+                            title = doc.getString("title") ?: "Coin Activity",
+                            amount = doc.getLong("amount") ?: 0L,
+                            isCredit = doc.getBoolean("isCredit") ?: true,
+                            timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                onLoaded(list)
+            }
+            .addOnFailureListener {
+                onLoaded(emptyList())
+            }
     }
 }

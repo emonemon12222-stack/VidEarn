@@ -379,16 +379,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onResult(false, "Please enter your email and password.")
             return
         }
-        val result = repository.signIn(email, pass)
-        result.fold(
-            onSuccess = {
-                _statusMessage.value = "Welcome back, ${it.name}!"
+        repository.signInWithCloudFallback(email, pass) { success, msg, user ->
+            if (success && user != null) {
+                _statusMessage.value = "Welcome back, ${user.name}!"
                 onResult(true, "Success")
-            },
-            onFailure = {
-                onResult(false, it.message ?: "Sign in failed")
+            } else {
+                onResult(false, msg)
             }
-        )
+        }
     }
 
     fun signInGuest() {
