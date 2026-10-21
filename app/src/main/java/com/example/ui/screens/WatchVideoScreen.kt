@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -55,6 +56,7 @@ fun WatchVideoScreen(
     var isSubscribed by remember { mutableStateOf(false) }
     var isDescExpanded by remember { mutableStateOf(false) }
     var commentInput by remember { mutableStateOf("") }
+    var isPlaybackError by remember { mutableStateOf(false) }
 
     val requiredSec = adminSettings.requiredLongWatchSec
     val progress = (videoWatchSec.toFloat() / requiredSec.toFloat()).coerceIn(0f, 1f)
@@ -83,8 +85,96 @@ fun WatchVideoScreen(
             VideoPlayerView(
                 videoUrl = video.videoUrl,
                 isShort = video.type == VideoType.SHORT || YouTubeHelper.isShortsUrl(video.videoUrl),
+                onPlaybackError = {
+                    isPlaybackError = true
+                },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // In-Player Fallback Card if YouTube embedding is restricted (Error 152-4)
+            if (isPlaybackError) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(video.thumbnailUrl)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(0.3f)
+                    )
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = BrandRed.copy(alpha = 0.9f)
+                        ) {
+                            Text(
+                                text = "⚠️ Playback Restricted (Error 152-4)",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                viewModel.setVideoPlaying(true)
+                                try {
+                                    val targetUrl = if (YouTubeHelper.isYouTubeUrl(video.videoUrl)) {
+                                        val vidId = YouTubeHelper.extractVideoId(video.videoUrl)
+                                        if (vidId != null) "https://www.youtube.com/watch?v=$vidId" else video.videoUrl
+                                    } else {
+                                        video.videoUrl
+                                    }
+                                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(targetUrl)).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    // ignore
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BrandRed),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Watch on YouTube App", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "🪙 Your coin reward timer continues running automatically!",
+                            color = CoinGold,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
 
             // Top Bar over Player: Back button & Video Title
             Row(
@@ -224,6 +314,7 @@ fun WatchVideoScreen(
                     // Fallback / Direct YouTube App Launch Button (Bypasses Error 152-4 and keeps coin timer running)
                     Button(
                         onClick = {
+                            viewModel.setVideoPlaying(true)
                             try {
                                 val targetUrl = if (YouTubeHelper.isYouTubeUrl(video.videoUrl)) {
                                     val vidId = YouTubeHelper.extractVideoId(video.videoUrl)
@@ -254,8 +345,16 @@ fun WatchVideoScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Watch on Official YouTube App", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Watch on Official YouTube App (Keeps Timer Running)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "⏱️ Bypasses playback restrictions (Error 152-4) while your coin reward continues counting down smoothly.",
+                        color = DarkTextMuted,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
 
                     Spacer(modifier = Modifier.height(10.dp))
 

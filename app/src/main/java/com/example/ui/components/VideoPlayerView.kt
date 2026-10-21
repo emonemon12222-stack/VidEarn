@@ -13,11 +13,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.util.YouTubeHelper
 
+class WebAppInterface(private val onError: () -> Unit) {
+    @JavascriptInterface
+    fun onPlaybackError(errorCode: Int) {
+        onError()
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun VideoPlayerView(
     videoUrl: String,
     isShort: Boolean = false,
+    onPlaybackError: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val videoId = remember(videoUrl) { YouTubeHelper.extractVideoId(videoUrl) }
@@ -39,6 +47,15 @@ fun VideoPlayerView(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     setBackgroundColor(android.graphics.Color.BLACK)
+
+                    addJavascriptInterface(
+                        WebAppInterface {
+                            post {
+                                onPlaybackError()
+                            }
+                        },
+                        "AndroidBridge"
+                    )
 
                     // Enable third-party cookies: Required by YouTube to authenticate embed sessions and prevent error 152-4
                     try {

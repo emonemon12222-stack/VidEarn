@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -217,7 +218,63 @@ fun MainContent(viewModel: MainViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            val hasFirebaseUser = remember {
+                try {
+                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null
+                } catch (e: Exception) {
+                    false
+                }
+            }
+
             when {
+                // If user is restoring session from persistent Firebase Auth
+                currentUser == null && hasFirebaseUser -> {
+                    LaunchedEffect(Unit) {
+                        viewModel.checkAndRestoreSession()
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(DarkBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(
+                                        Brush.linearGradient(listOf(BrandRed, BrandRedDark))
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(38.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            CircularProgressIndicator(
+                                color = BrandRed,
+                                modifier = Modifier.size(28.dp),
+                                strokeWidth = 3.dp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Restoring your account...",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+
                 // If user is not logged in, show AuthScreen
                 currentUser == null -> {
                     AuthScreen(viewModel = viewModel)

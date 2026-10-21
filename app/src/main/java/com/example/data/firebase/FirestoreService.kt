@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.example.data.model.*
 import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.ListenerRegistration
@@ -11,9 +13,9 @@ import com.google.firebase.firestore.PersistentCacheSettings
 import com.google.firebase.firestore.SetOptions
 
 /**
- * Manages Firebase Firestore cloud synchronization with offline persistence.
- * All operations are linked to the user account ID (userId) and gracefully handle
- * offline mode via Firestore's PersistentCache.
+ * Manages Firebase Firestore cloud synchronization with offline persistence
+ * and persistent Firebase Authentication sessions.
+ * All operations are linked to the user account ID (userId / permanent Auth UID).
  */
 class FirestoreService(private val context: Context) {
 
@@ -24,6 +26,82 @@ class FirestoreService(private val context: Context) {
         private const val WITHDRAWALS_COLLECTION = "withdrawals"
         private const val TRANSACTIONS_COLLECTION = "transactions"
         private const val WATCHED_COLLECTION = "watched_history"
+    }
+
+    val auth: FirebaseAuth? by lazy {
+        try {
+            if (FirebaseApp.getApps(context).isEmpty()) {
+                FirebaseApp.initializeApp(context)
+            }
+            FirebaseAuth.getInstance()
+        } catch (e: Throwable) {
+            Log.e(TAG, "FirebaseAuth initialization warning: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Returns the currently authenticated persistent Firebase User, if any.
+     * Firebase Auth on Android maintains its session across app restarts & updates.
+     */
+    fun getCurrentFirebaseUser(): FirebaseUser? = try {
+        auth?.currentUser
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Firebase Email/Password Sign-In with permanent session persistence.
+     */
+    fun firebaseSignIn(email: String, pass: String, onComplete: (Boolean, String?, String?) -> Unit) {
+        val a = auth
+        if (a == null) {
+            onComplete(false, null, "Firebase Auth is unavailable on this device")
+            return
+        }
+        a.signInWithEmailAndPassword(email.trim(), pass)
+            .addOnSuccessListener { result ->
+                val uid = result.user?.uid
+                Log.d(TAG, "Firebase Auth sign-in successful: uid=$uid")
+                onComplete(true, uid, null)
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Firebase Auth sign-in failed: ${e.message}")
+                onComplete(false, null, e.message)
+            }
+    }
+
+    /**
+     * Firebase Email/Password Sign-Up. Generates a permanent Firebase Auth UID.
+     */
+    fun firebaseSignUp(email: String, pass: String, onComplete: (Boolean, String?, String?) -> Unit) {
+        val a = auth
+        if (a == null) {
+            onComplete(false, null, "Firebase Auth is unavailable on this device")
+            return
+        }
+        a.createUserWithEmailAndPassword(email.trim(), pass)
+            .addOnSuccessListener { result ->
+                val uid = result.user?.uid
+                Log.d(TAG, "Firebase Auth account created: uid=$uid")
+                onComplete(true, uid, null)
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Firebase Auth sign-up failed: ${e.message}")
+                onComplete(false, null, e.message)
+            }
+    }
+
+    /**
+     * Signs out of Firebase Auth.
+     */
+    fun firebaseSignOut() {
+        try {
+            auth?.signOut()
+            Log.d(TAG, "Firebase Auth signed out")
+        } catch (e: Exception) {
+            Log.w(TAG, "Firebase Auth signOut warning: ${e.message}")
+        }
     }
 
     private val firestore: FirebaseFirestore? by lazy {

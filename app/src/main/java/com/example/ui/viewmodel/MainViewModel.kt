@@ -195,6 +195,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isVideoPlaying.value = !_isVideoPlaying.value
     }
 
+    fun setVideoPlaying(playing: Boolean) {
+        _isVideoPlaying.value = playing
+    }
+
+    fun checkAndRestoreSession() {
+        repository.restoreSession()
+    }
+
     private fun startVideoWatchTimer(video: Video) {
         videoWatchJob?.cancel()
         _videoWatchSec.value = 0
@@ -335,17 +343,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onResult(false, "Please provide a valid name, email, and at least 6-character password.")
             return
         }
-        val result = repository.signUp(name, email, pass, referralCode)
-        result.fold(
-            onSuccess = {
+        repository.signUpWithFirebase(name, email, pass, referralCode) { success, msg, user ->
+            if (success && user != null) {
                 val bonusMsg = if (referralCode.isNotBlank()) " +150 Coins added with Referral Bonus! 🎁" else " +100 Coins welcome bonus added!"
-                _statusMessage.value = "Welcome to VidEarn, ${it.name}!$bonusMsg"
+                _statusMessage.value = "Welcome to VidEarn, ${user.name}!$bonusMsg"
                 onResult(true, "Success")
-            },
-            onFailure = {
-                onResult(false, it.message ?: "Signup failed")
+            } else {
+                onResult(false, msg)
             }
-        )
+        }
     }
 
     /**
@@ -443,6 +449,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             uploaderId = user.id,
             uploaderName = user.name
         )
+        repository.refreshPublicVideos()
         _celebration.value = RewardCelebration(
             coins = reward,
             title = "Video Uploaded! 🎬",

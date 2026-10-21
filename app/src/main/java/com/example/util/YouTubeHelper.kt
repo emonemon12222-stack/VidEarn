@@ -146,6 +146,18 @@ object YouTubeHelper {
                     </iframe>
                 </div>
                 <script>
+                    // Listen for YouTube IFrame API messages to capture restriction errors (e.g. 150, 152, 101, 2, 100)
+                    window.addEventListener('message', function(event) {
+                        try {
+                            var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                            if (data && (data.event === 'onError' || data.info === 150 || data.info === 152 || data.info === 101 || data.info === 2 || data.info === 100)) {
+                                if (window.AndroidBridge && window.AndroidBridge.onPlaybackError) {
+                                    window.AndroidBridge.onPlaybackError(parseInt(data.info) || 152);
+                                }
+                            }
+                        } catch(e) {}
+                    });
+
                     // PostMessage play command after iframe loads to ensure instant autoplay
                     window.addEventListener('load', function() {
                         setTimeout(function() {

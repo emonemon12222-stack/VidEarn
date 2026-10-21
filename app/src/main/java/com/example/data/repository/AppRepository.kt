@@ -217,6 +217,120 @@ class AppRepository(private val context: Context) {
         return "$prefix$suffix"
     }
 
+    /**
+     * Firebase Authentication powered sign up.
+     * Links account directly to permanent Firebase Auth UID so APK updates never wipe account.
+     */
+    fun signUpWithFirebase(
+        name: String,
+        email: String,
+        pass: String,
+        inputReferralCode: String = "",
+        onResult: (Boolean, String, User?) -> Unit
+    ) {
+        val trimmedEmail = email.trim().lowercase()
+        val usersJson = masterPrefs.getString("users_db", "{}") ?: "{}"
+        val usersObj = JSONObject(usersJson)
+
+        val trimmedRefCode = inputReferralCode.trim().uppercase()
+        var referrerUser: User? = null
+        if (trimmedRefCode.isNotBlank()) {
+            referrerUser = _allUsers.value.find { it.referralCode.equals(trimmedRefCode, ignoreCase = true) }
+            if (referrerUser == null) {
+                val keys = usersObj.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val uObj = usersObj.getJSONObject(k)
+                    if (uObj.optString("referralCode").equals(trimmedRefCode, ignoreCase = true)) {
+                        referrerUser = deserializeUser(uObj)
+                        break
+                    }
+                }
+            }
+            if (referrerUser == null) {
+                onResult(false, "Referral code '$trimmedRefCode' not found. Please check or leave empty.", null)
+                return
+            }
+        }
+
+        val refBonusNewUser = if (referrerUser != null) _adminSettings.value.referralBonusNewUser else 0L
+        val startingCoins = 100L + refBonusNewUser
+
+        // Attempt Firebase Authentication creation to establish persistent session
+        firestoreService.firebaseSignUp(trimmedEmail, pass) { success, uid, error ->
+            val permanentUserId = if (success && !uid.isNullOrBlank()) {
+                uid
+            } else if (error != null && error.contains("already in use", ignoreCase = true)) {
+                // If account exists in Firebase Auth, attempt signing in
+                firestoreService.firebaseSignIn(trimmedEmail, pass) { signInSuccess, signInUid, _ ->
+                    if (signInSuccess && !signInUid.isNullOrBlank()) {
+                        firestoreService.fetchUser(signInUid) { cloudUser ->
+                            if (cloudUser != null) {
+                                saveSession(cloudUser)
+                                onResult(true, "Welcome back! Account restored from cloud.", cloudUser)
+                            } else {
+                                signInWithCloudFallback(trimmedEmail, pass, onResult)
+                            }
+                        }
+                    } else {
+                        onResult(false, "Email already registered. Please tap 'Sign In' instead.", null)
+                    }
+                }
+                return@firebaseSignUp
+            } else {
+                // Offline fallback ID
+                "usr_" + UUID.randomUUID().toString().take(8)
+            }
+
+            val generatedRefCode = generateReferralCode(name, permanentUserId)
+            val newUser = User(
+                id = permanentUserId,
+                name = name.trim(),
+                email = trimmedEmail,
+                avatarUrl = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
+                coins = startingCoins,
+                referralCode = generatedRefCode,
+                referredBy = if (referrerUser != null) trimmedRefCode else "",
+                totalReferredCount = 0,
+                totalReferralBonusEarned = 0L,
+                joinedAt = System.currentTimeMillis()
+            )
+
+            val userRecord = serializeUser(newUser).apply {
+                put("password", pass)
+            }
+            usersObj.put(trimmedEmail, userRecord)
+            writeToAllPrefs { it.putString("users_db", usersObj.toString()) }
+
+            scope.launch {
+                try {
+                    userDao.insertUser(UserEntity.fromUser(newUser, pass))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Room insertUser error: ${e.message}")
+                }
+            }
+
+            addTransaction(newUser.id, "Welcome Bonus", 100, true)
+
+            if (referrerUser != null) {
+                val refBonusReferrer = _adminSettings.value.referralBonusReferrer
+                addTransaction(newUser.id, "Referral Bonus (Code: $trimmedRefCode)", refBonusNewUser, true)
+
+                val updatedReferrer = referrerUser.copy(
+                    coins = referrerUser.coins + refBonusReferrer,
+                    totalReferredCount = referrerUser.totalReferredCount + 1,
+                    totalReferralBonusEarned = referrerUser.totalReferralBonusEarned + refBonusReferrer
+                )
+                updateUserInDb(updatedReferrer)
+                addTransaction(referrerUser.id, "Referral Reward (${newUser.name} joined)", refBonusReferrer, true)
+            }
+
+            saveSession(newUser)
+            loadUsers()
+            onResult(true, "Account created successfully!", newUser)
+        }
+    }
+
     fun signUp(name: String, email: String, pass: String, inputReferralCode: String = ""): Result<User> {
         val trimmedEmail = email.trim().lowercase()
         val usersJson = masterPrefs.getString("users_db", "{}") ?: "{}"
@@ -335,38 +449,82 @@ class AppRepository(private val context: Context) {
     }
 
     /**
-     * Sign In with asynchronous Firestore Cloud Fallback.
-     * If the app was updated or reinstalled and local database was empty, it queries
-     * Firestore cloud to restore the user's permanent account, coin balance, and history.
+     * Sign In with asynchronous Firebase Auth and Firestore Cloud Fallback.
+     * Guarantees persistent session across app updates and re-installations.
      */
     fun signInWithCloudFallback(
         email: String,
         pass: String,
         onResult: (Boolean, String, User?) -> Unit
     ) {
-        val localResult = signIn(email, pass)
-        localResult.fold(
-            onSuccess = { user ->
-                onResult(true, "Success", user)
-            },
-            onFailure = { localError ->
-                // Attempt cloud restoration from Firestore using permanent email/auth
-                firestoreService.fetchUserByEmail(email) { cloudUser ->
+        val trimmedEmail = email.trim().lowercase()
+
+        // 1. Try Firebase Authentication first to ensure persistent local session
+        firestoreService.firebaseSignIn(trimmedEmail, pass) { fbSuccess, fbUid, fbErr ->
+            if (fbSuccess && !fbUid.isNullOrBlank()) {
+                // Fetch user from Firestore by permanent Auth UID
+                firestoreService.fetchUser(fbUid) { cloudUser ->
                     if (cloudUser != null) {
                         if (cloudUser.isBanned) {
                             onResult(false, "This account has been suspended by admin.", null)
-                            return@fetchUserByEmail
+                            return@fetchUser
                         }
-                        // Restored from Firestore!
-                        saveSession(cloudUser)
-                        updateUserInDb(cloudUser)
-                        onResult(true, "Account restored successfully from cloud!", cloudUser)
+                        val localUser = _allUsers.value.find { it.id == fbUid || it.email.equals(trimmedEmail, ignoreCase = true) }
+                        val bestCoins = if (localUser != null) maxOf(localUser.coins, cloudUser.coins) else cloudUser.coins
+                        val finalUser = cloudUser.copy(coins = bestCoins)
+                        saveSession(finalUser)
+                        updateUserInDb(finalUser)
+                        onResult(true, "Success", finalUser)
                     } else {
-                        onResult(false, localError.message ?: "Sign in failed", null)
+                        // User not in Firestore /users/{uid} yet, check local DB
+                        val localResult = signIn(trimmedEmail, pass)
+                        localResult.fold(
+                            onSuccess = { user ->
+                                val linkedUser = user.copy(id = fbUid)
+                                saveSession(linkedUser)
+                                updateUserInDb(linkedUser)
+                                onResult(true, "Success", linkedUser)
+                            },
+                            onFailure = {
+                                val newUser = User(
+                                    id = fbUid,
+                                    name = trimmedEmail.substringBefore("@"),
+                                    email = trimmedEmail,
+                                    coins = 100L,
+                                    referralCode = generateReferralCode(trimmedEmail.substringBefore("@"), fbUid)
+                                )
+                                saveSession(newUser)
+                                onResult(true, "Success", newUser)
+                            }
+                        )
                     }
                 }
+            } else {
+                // Fallback to local database check if Firebase Auth is offline
+                val localResult = signIn(trimmedEmail, pass)
+                localResult.fold(
+                    onSuccess = { user ->
+                        onResult(true, "Success", user)
+                    },
+                    onFailure = { localError ->
+                        // Attempt cloud restoration from Firestore by email
+                        firestoreService.fetchUserByEmail(trimmedEmail) { cloudUser ->
+                            if (cloudUser != null) {
+                                if (cloudUser.isBanned) {
+                                    onResult(false, "This account has been suspended by admin.", null)
+                                    return@fetchUserByEmail
+                                }
+                                saveSession(cloudUser)
+                                updateUserInDb(cloudUser)
+                                onResult(true, "Account restored successfully from cloud!", cloudUser)
+                            } else {
+                                onResult(false, fbErr ?: localError.message ?: "Sign in failed", null)
+                            }
+                        }
+                    }
+                )
             }
-        )
+        }
     }
 
     /**
@@ -403,6 +561,7 @@ class AppRepository(private val context: Context) {
     }
 
     fun signOut() {
+        firestoreService.firebaseSignOut()
         writeToAllPrefs {
             it.remove("logged_in_user_id")
             it.remove("active_user_session_json")
@@ -436,64 +595,121 @@ class AppRepository(private val context: Context) {
         syncUserCloudData(user.id)
     }
 
-    private fun restoreSession() {
+    fun restoreSession() {
+        // 0. FIRST: Check Firebase Authentication persistent local session.
+        // On Android, Firebase Auth token persists across app updates and reboots.
+        val fbUser = firestoreService.getCurrentFirebaseUser()
+        if (fbUser != null) {
+            val fbUid = fbUser.uid
+            val fbEmail = fbUser.email ?: ""
+            Log.d(TAG, "Restoring session from active Firebase Auth session: uid=$fbUid, email=$fbEmail")
+
+            var localUser = _allUsers.value.find { it.id == fbUid || (fbEmail.isNotBlank() && it.email.equals(fbEmail, ignoreCase = true)) }
+
+            if (localUser == null) {
+                val usersJson = masterPrefs.getString("users_db", "{}") ?: "{}"
+                try {
+                    val obj = JSONObject(usersJson)
+                    if (fbEmail.isNotBlank() && obj.has(fbEmail.lowercase())) {
+                        localUser = deserializeUser(obj.getJSONObject(fbEmail.lowercase()))
+                    } else {
+                        val keys = obj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            val uObj = obj.getJSONObject(k)
+                            if (uObj.optString("id") == fbUid) {
+                                localUser = deserializeUser(uObj)
+                                break
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error looking up local user for fbUid: ${e.message}")
+                }
+            }
+
+            if (localUser != null && !localUser.isBanned) {
+                val resolvedUser = localUser.copy(id = fbUid)
+                _currentUser.value = resolvedUser
+                writeToAllPrefs {
+                    it.putString("logged_in_user_id", fbUid)
+                    it.putString("active_user_session_json", serializeUser(resolvedUser).toString())
+                }
+                loadWatchedHistoryForUser(fbUid)
+                syncUserCloudData(fbUid)
+                return
+            } else {
+                // User has active Firebase Auth, but local profile not yet cached (e.g. fresh install/update).
+                // Create provisional user immediately so UI navigates straight to HomeScreen!
+                val provisional = User(
+                    id = fbUid,
+                    name = fbUser.displayName ?: if (fbEmail.isNotBlank()) fbEmail.substringBefore("@") else "User",
+                    email = fbEmail,
+                    avatarUrl = fbUser.photoUrl?.toString() ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
+                    coins = 100L,
+                    referralCode = generateReferralCode(fbEmail.substringBefore("@"), fbUid)
+                )
+                _currentUser.value = provisional
+                syncUserCloudData(fbUid)
+                return
+            }
+        }
+
+        // 1. Fallback to multi-store SharedPreferences
         val userId = masterPrefs.getString("logged_in_user_id", null)
             ?: prefsV3.getString("logged_in_user_id", null)
             ?: legacyPrefs.getString("logged_in_user_id", null)
 
-        if (userId == null) {
-            // Check Room Database for any existing user to restore
-            scope.launch {
+        if (userId != null) {
+            val savedSession = masterPrefs.getString("active_user_session_json", null)
+                ?: prefsV3.getString("active_user_session_json", null)
+
+            if (savedSession != null) {
                 try {
-                    val roomUsers = userDao.getAllUsers()
-                    if (roomUsers.isNotEmpty()) {
-                        val mostRecent = roomUsers.first().toUser()
-                        _currentUser.value = mostRecent
-                        syncUserCloudData(mostRecent.id)
+                    val parsed = deserializeUser(JSONObject(savedSession))
+                    if (!parsed.isBanned) {
+                        _currentUser.value = parsed
+                        loadWatchedHistoryForUser(parsed.id)
+                        syncUserCloudData(parsed.id)
+                        return
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Room restoreSession error: ${e.message}")
+                    Log.w(TAG, "Error restoring saved session JSON: ${e.message}")
                 }
             }
-            return
-        }
 
-        // 1. Direct restore from serialized active session JSON
-        val savedSession = masterPrefs.getString("active_user_session_json", null)
-            ?: prefsV3.getString("active_user_session_json", null)
-
-        if (savedSession != null) {
-            try {
-                val parsed = deserializeUser(JSONObject(savedSession))
-                if (!parsed.isBanned) {
-                    _currentUser.value = parsed
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error restoring saved session JSON: ${e.message}")
-            }
-        }
-
-        // 2. Fallback to allUsers search
-        if (_currentUser.value == null) {
             val user = _allUsers.value.find { it.id == userId }
             if (user != null && !user.isBanned) {
                 _currentUser.value = user
+                loadWatchedHistoryForUser(user.id)
+                syncUserCloudData(user.id)
+                return
             } else if (userId == "guest_user") {
-                _currentUser.value = User(
-                    id = "guest_user",
-                    name = "Demo User",
-                    email = "demo@videarn.com",
-                    avatarUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-                    coins = 250,
-                    referralCode = "DEMO99"
-                )
+                val guest = signInGuest()
+                _currentUser.value = guest
+                return
             }
         }
 
-        val activeUser = _currentUser.value
-        if (activeUser != null) {
-            loadWatchedHistoryForUser(activeUser.id)
-            syncUserCloudData(activeUser.id)
+        // 2. Check Room Database SQLite for existing user session
+        scope.launch {
+            try {
+                val roomUsers = userDao.getAllUsers()
+                if (roomUsers.isNotEmpty()) {
+                    val mostRecent = roomUsers.first().toUser()
+                    if (!mostRecent.isBanned && _currentUser.value == null) {
+                        _currentUser.value = mostRecent
+                        writeToAllPrefs {
+                            it.putString("logged_in_user_id", mostRecent.id)
+                            it.putString("active_user_session_json", serializeUser(mostRecent).toString())
+                        }
+                        loadWatchedHistoryForUser(mostRecent.id)
+                        syncUserCloudData(mostRecent.id)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Room restoreSession error: ${e.message}")
+            }
         }
     }
 
@@ -1003,13 +1219,17 @@ class AppRepository(private val context: Context) {
                 val userUploads = loadUserUploadedVideosFromPrefs()
                 val defaultVideos = getPreSeededVideos()
                 val combinedMap = linkedMapOf<String, Video>()
-                for (v in userUploads) combinedMap[v.id] = v
-                for (v in cloudVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+
+                // Sort all newly uploaded public & local videos newest first
+                val allUploads = (userUploads + cloudVideos).distinctBy { it.id }.sortedByDescending { it.createdAt }
+                for (v in allUploads) combinedMap[v.id] = v
                 for (v in _videos.value) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
                 for (v in defaultVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+
                 val merged = combinedMap.values.toList()
                 _videos.value = merged
                 saveVideos(merged)
+                Log.d(TAG, "Public videos real-time sync updated feed: ${merged.size} videos")
             }
         }
     }
@@ -1023,13 +1243,17 @@ class AppRepository(private val context: Context) {
                 val userUploads = loadUserUploadedVideosFromPrefs()
                 val defaultVideos = getPreSeededVideos()
                 val combinedMap = linkedMapOf<String, Video>()
-                for (v in userUploads) combinedMap[v.id] = v
-                for (v in cloudVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+
+                // Sort all newly uploaded public & local videos newest first
+                val allUploads = (userUploads + cloudVideos).distinctBy { it.id }.sortedByDescending { it.createdAt }
+                for (v in allUploads) combinedMap[v.id] = v
                 for (v in _videos.value) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
                 for (v in defaultVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+
                 val merged = combinedMap.values.toList()
                 _videos.value = merged
                 saveVideos(merged)
+                Log.d(TAG, "Refreshed public video feed: ${merged.size} videos")
             }
         }
     }
