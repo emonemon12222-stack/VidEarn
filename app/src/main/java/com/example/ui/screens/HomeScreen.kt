@@ -31,6 +31,7 @@ import coil.request.ImageRequest
 import com.example.data.model.Video
 import com.example.ui.components.AdSterraBanner
 import com.example.ui.components.ShortsItem
+import com.example.ui.components.VideoCard
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.HomeSubTab
 import com.example.ui.viewmodel.MainTab
@@ -41,6 +42,10 @@ fun HomeScreen(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
+    LaunchedEffect(Unit) {
+        viewModel.refreshVideosFromCloud()
+    }
+
     val homeSubTab by viewModel.homeSubTab.collectAsState()
     val longVideos by viewModel.longVideos.collectAsState()
     val shorts by viewModel.shorts.collectAsState()
@@ -376,157 +381,3 @@ fun HomeScreen(
     }
 }
 
-@Composable
-fun VideoCard(
-    video: Video,
-    onWatchClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-            .clickable(onClick = onWatchClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-        border = CardDefaults.outlinedCardBorder()
-    ) {
-        Column {
-            // Video Thumbnail Container strictly following 16:9 aspect ratio
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .background(Color(0xFF1E2130))
-            ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(video.thumbnailUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = video.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Play Button Overlay Icon
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.65f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(30.dp)
-                    )
-                }
-
-                // Duration badge bottom right
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(4.dp),
-                    color = Color.Black.copy(alpha = 0.8f)
-                ) {
-                    Text(
-                        text = video.durationLabel,
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-
-                // Coin reward badge top left
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF1E1E2E).copy(alpha = 0.9f),
-                    border = CardDefaults.outlinedCardBorder()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MonetizationOn,
-                            contentDescription = null,
-                            tint = CoinGold,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "+${video.rewardCoins} Coins",
-                            color = CoinGold,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
-                }
-            }
-
-            // Video Meta & Channel Row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                AsyncImage(
-                    model = video.channelAvatar.ifBlank { "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100" },
-                    contentDescription = video.channelName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                )
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = video.title,
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = "${video.channelName} • ${video.views} views • ${video.category}",
-                        color = DarkTextSecondary,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Watch Button
-                Button(
-                    onClick = onWatchClick,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BrandRed,
-                        contentColor = Color.White
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                    modifier = Modifier.height(34.dp)
-                ) {
-                    Text("Watch", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}

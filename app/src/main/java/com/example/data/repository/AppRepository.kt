@@ -101,6 +101,7 @@ class AppRepository(private val context: Context) {
         loadInitialComments()
         loadTransactions()
         restoreSession()
+        startPublicVideosRealtimeSync()
     }
 
     // ---------------- APP MIGRATION & SMOOTH UPDATES ----------------
@@ -989,6 +990,50 @@ class AppRepository(private val context: Context) {
         }
     }
 
+    private var publicVideosListener: com.google.firebase.firestore.ListenerRegistration? = null
+
+    /**
+     * Attaches a real-time listener to the global public `videos` collection in Firestore.
+     * Ensures newly uploaded videos by any user immediately appear on HomeScreen in real-time.
+     */
+    fun startPublicVideosRealtimeSync() {
+        publicVideosListener?.remove()
+        publicVideosListener = firestoreService.observePublicVideos { cloudVideos ->
+            if (cloudVideos.isNotEmpty()) {
+                val userUploads = loadUserUploadedVideosFromPrefs()
+                val defaultVideos = getPreSeededVideos()
+                val combinedMap = linkedMapOf<String, Video>()
+                for (v in userUploads) combinedMap[v.id] = v
+                for (v in cloudVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+                for (v in _videos.value) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+                for (v in defaultVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+                val merged = combinedMap.values.toList()
+                _videos.value = merged
+                saveVideos(merged)
+            }
+        }
+    }
+
+    /**
+     * Refreshes the global public video feed directly from Firestore
+     */
+    fun refreshPublicVideos() {
+        firestoreService.fetchVideos { cloudVideos ->
+            if (cloudVideos.isNotEmpty()) {
+                val userUploads = loadUserUploadedVideosFromPrefs()
+                val defaultVideos = getPreSeededVideos()
+                val combinedMap = linkedMapOf<String, Video>()
+                for (v in userUploads) combinedMap[v.id] = v
+                for (v in cloudVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+                for (v in _videos.value) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+                for (v in defaultVideos) if (!combinedMap.containsKey(v.id)) combinedMap[v.id] = v
+                val merged = combinedMap.values.toList()
+                _videos.value = merged
+                saveVideos(merged)
+            }
+        }
+    }
+
     /**
      * User-uploaded videos are stored in a dedicated key that is NEVER touched or overwritten
      * by default seed updates or app migrations.
@@ -1086,7 +1131,7 @@ class AppRepository(private val context: Context) {
         _videos.value = updated
         saveVideos(updated)
 
-        // Sync directly to Firestore
+        // Sync directly to Firestore (both public and personal sub-collection)
         firestoreService.syncVideo(newVideo)
 
         // Give upload reward
@@ -1116,10 +1161,12 @@ class AppRepository(private val context: Context) {
     }
 
     fun deleteVideo(videoId: String) {
+        val target = _videos.value.find { it.id == videoId }
+        val uploaderId = target?.uploaderId
         val updated = _videos.value.filterNot { it.id == videoId }
         _videos.value = updated
         saveVideos(updated)
-        firestoreService.deleteVideo(videoId)
+        firestoreService.deleteVideo(videoId, uploaderId)
 
         scope.launch {
             try {

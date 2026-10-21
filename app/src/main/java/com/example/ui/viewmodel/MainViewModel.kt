@@ -542,6 +542,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _statusMessage.value = "Video deleted."
     }
 
+    fun refreshVideosFromCloud() {
+        repository.refreshPublicVideos()
+    }
+
     fun toggleUserBan(userId: String) {
         repository.toggleUserBan(userId)
         _statusMessage.value = "User status updated."

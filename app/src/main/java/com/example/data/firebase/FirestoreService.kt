@@ -262,7 +262,8 @@ class FirestoreService(private val context: Context) {
     // ---------------- VIDEOS SYNC ----------------
 
     /**
-     * Persists uploaded video directly to Firestore linked to the uploaderId
+     * Persists uploaded video directly to BOTH the global public `videos` collection
+     * AND the user's personal sub-collection (/users/{userId}/videos/{videoId}).
      */
     fun syncVideo(video: Video, onComplete: ((Boolean) -> Unit)? = null) {
         val db = firestore ?: run {
@@ -290,15 +291,79 @@ class FirestoreService(private val context: Context) {
             "createdAt" to video.createdAt
         )
 
+        // 1. Save to Global Public Videos collection
         db.collection(VIDEOS_COLLECTION).document(video.id)
             .set(data, SetOptions.merge())
             .addOnSuccessListener {
-                Log.d(TAG, "Video ${video.id} synced to Firestore (uploader: ${video.uploaderId})")
+                Log.d(TAG, "Video ${video.id} synced to global public Firestore videos collection")
                 onComplete?.invoke(true)
             }
             .addOnFailureListener { e ->
-                Log.w(TAG, "Firestore syncVideo failed: ${e.message}")
+                Log.w(TAG, "Firestore syncVideo to public collection failed: ${e.message}")
                 onComplete?.invoke(false)
+            }
+
+        // 2. Save to User's Personal Sub-collection: /users/{userId}/videos/{videoId}
+        if (video.uploaderId.isNotBlank() && video.uploaderId != "official") {
+            db.collection(USERS_COLLECTION).document(video.uploaderId)
+                .collection(VIDEOS_COLLECTION).document(video.id)
+                .set(data, SetOptions.merge())
+                .addOnSuccessListener {
+                    Log.d(TAG, "Video ${video.id} also synced to personal /users/${video.uploaderId}/videos sub-collection")
+                }
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "Failed syncing to personal sub-collection: ${e.message}")
+                }
+        }
+    }
+
+    /**
+     * Real-time listener on the global public `videos` collection in Firestore.
+     * Ensures newly uploaded videos immediately appear on HomeScreen in real-time.
+     */
+    fun observePublicVideos(onVideosChanged: (List<Video>) -> Unit): ListenerRegistration? {
+        val db = firestore ?: return null
+
+        return db.collection(VIDEOS_COLLECTION)
+            .addSnapshotListener { snapshots, error ->
+                if (error != null) {
+                    Log.w(TAG, "observePublicVideos error: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshots != null) {
+                    val list = snapshots.documents.mapNotNull { doc ->
+                        try {
+                            val videoTypeStr = doc.getString("type") ?: "LONG"
+                            val videoType = try {
+                                VideoType.valueOf(videoTypeStr)
+                            } catch (e: Exception) {
+                                VideoType.LONG
+                            }
+                            Video(
+                                id = doc.getString("id") ?: doc.id,
+                                title = doc.getString("title") ?: "Video",
+                                description = doc.getString("description") ?: "",
+                                videoUrl = doc.getString("videoUrl") ?: "",
+                                type = videoType,
+                                thumbnailUrl = doc.getString("thumbnailUrl") ?: "",
+                                channelName = doc.getString("channelName") ?: "Creator",
+                                channelAvatar = doc.getString("channelAvatar") ?: "",
+                                views = doc.getLong("views") ?: 100L,
+                                likes = doc.getLong("likes") ?: 10L,
+                                isLiked = doc.getBoolean("isLiked") ?: false,
+                                commentsCount = (doc.getLong("commentsCount") ?: 0L).toInt(),
+                                durationLabel = doc.getString("durationLabel") ?: "02:30",
+                                uploaderId = doc.getString("uploaderId") ?: "official",
+                                category = doc.getString("category") ?: "Trending",
+                                rewardCoins = (doc.getLong("rewardCoins") ?: 25L).toInt(),
+                                createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    onVideosChanged(list)
+                }
             }
     }
 
@@ -412,15 +477,24 @@ class FirestoreService(private val context: Context) {
     }
 
     /**
-     * Deletes video from Firestore
+     * Deletes video from global public collection AND user's sub-collection
      */
-    fun deleteVideo(videoId: String) {
+    fun deleteVideo(videoId: String, uploaderId: String? = null) {
         val db = firestore ?: return
         db.collection(VIDEOS_COLLECTION).document(videoId)
             .delete()
             .addOnFailureListener { e ->
                 Log.w(TAG, "Firestore deleteVideo failed: ${e.message}")
             }
+
+        if (!uploaderId.isNullOrBlank() && uploaderId != "official") {
+            db.collection(USERS_COLLECTION).document(uploaderId)
+                .collection(VIDEOS_COLLECTION).document(videoId)
+                .delete()
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "Firestore deleteVideo from user sub-collection failed: ${e.message}")
+                }
+        }
     }
 
     // ---------------- WATCHED VIDEO HISTORY SYNC ----------------

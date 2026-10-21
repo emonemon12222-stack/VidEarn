@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.model.VideoType
+import com.example.ui.components.VideoCard
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainTab
 import com.example.ui.viewmodel.MainViewModel
@@ -599,61 +600,11 @@ fun ProfileScreen(
                 }
             } else {
                 items(userVideos) { video ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = CardDefaults.outlinedCardBorder()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(60.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.Black)
-                            ) {
-                                AsyncImage(
-                                    model = video.thumbnailUrl,
-                                    contentDescription = video.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(10.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = video.title,
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${video.type.name} • ${video.views} views • ${video.likes} likes",
-                                    color = DarkTextSecondary,
-                                    fontSize = 11.sp
-                                )
-                            }
-
-                            IconButton(
-                                onClick = { viewModel.deleteVideo(video.id) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                    tint = StatusRejected,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
+                    VideoCard(
+                        video = video,
+                        onWatchClick = { viewModel.openWatchVideo(video) },
+                        onDeleteClick = { viewModel.deleteVideo(video.id) }
+                    )
                 }
             }
 
